@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "google-health-mcp"
+version = "1.0.0"
+description = "MCP server for the Google Health API, with a local cache and trend analysis."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+keywords = ["google-health", "mcp", "model-context-protocol", "health", "fitness", "sleep"]
+authors = [
+    {name = "jjdelrio", email = "641373+partymola@users.noreply.github.com"},
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+# Every dependency is pinned to an exact version that the suite has been run
+# against. A range leaves the choice to the resolver, which is how `mcp` 2.0.0
+# reached installs unannounced and broke them. Bump deliberately, never by
+# widening a spec.
+dependencies = [
+    "mcp==2.0.0",
+    "anyio==4.14.2",
+]
+
+[project.scripts]
+google-health-mcp = "google_health_mcp.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/partymola/google-health-mcp"
+Repository = "https://github.com/partymola/google-health-mcp"
+"Bug Tracker" = "https://github.com/partymola/google-health-mcp/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.16.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

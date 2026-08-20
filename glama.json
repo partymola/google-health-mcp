@@ -1,0 +1,6 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": ["partymola"],
+  "name": "google-health-mcp",
+  "description": "Reads Google Health API data - heart rate, steps, exercises, sleep, weight, SpO2, HRV, ECG and irregular-rhythm notifications - into a local SQLite cache for fast offline queries and trend analysis. OAuth 2.0 with automatic token refresh, incremental sync, a cache-only offline mode, and a doctor command that diagnoses a setup without spending quota."
+}
