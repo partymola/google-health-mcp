@@ -2,11 +2,18 @@
 
 import json
 import os
+import sys
 import time
 
 import pytest
 
 from google_health_mcp.auth import _generate_pkce, _load_json, _save_json, refresh_google_token
+
+# Not `hasattr(os, "fchmod")`: CPython 3.13 added os.fchmod on Windows, so that
+# test stopped selecting POSIX and the mode assertions below ran there anyway.
+skip_non_posix = pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX mode bits; Windows uses ACLs"
+)
 
 
 class TestPKCE:
@@ -48,6 +55,7 @@ class TestSaveLoadJson:
         _save_json(path, {"key": "value"})
         assert path.exists()
 
+    @skip_non_posix
     def test_save_permissions(self, tmp_path):
         path = tmp_path / "test.json"
         _save_json(path, {"key": "value"})
@@ -157,7 +165,7 @@ def _refuse_the_network(what):
     return refuse
 
 
-@pytest.mark.skipif(not hasattr(os, "fchmod"), reason="POSIX mode bits; Windows uses ACLs")
+@skip_non_posix
 def test_an_existing_loose_token_file_is_tightened(tmp_path):
     """O_CREAT's mode applies only at creation, so upgrades kept 0644.
 
@@ -174,7 +182,6 @@ def test_an_existing_loose_token_file_is_tightened(tmp_path):
     assert oct(path.stat().st_mode & 0o777) == "0o600"
 
 
-@pytest.mark.skipif(not hasattr(os, "fchmod"), reason="POSIX mode bits; Windows uses ACLs")
 def test_the_mode_is_set_when_the_file_is_created(tmp_path, monkeypatch):
     """Pins the open mode, not just the final one.
 
@@ -194,7 +201,6 @@ def test_the_mode_is_set_when_the_file_is_created(tmp_path, monkeypatch):
     assert oct(seen["mode"]) == "0o600"
 
 
-@pytest.mark.skipif(not hasattr(os, "fchmod"), reason="POSIX mode bits; Windows uses ACLs")
 def test_a_chmod_failure_does_not_destroy_the_token(tmp_path, monkeypatch):
     """O_TRUNC has already emptied the file by the time the mode is set.
 

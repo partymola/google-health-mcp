@@ -774,11 +774,14 @@ def test_read_only_open_handles_a_non_utf8_path(tmp_path):
     Encoding the path through os.fsencode is what keeps this working; passing
     the str straight to `quote` raises UnicodeEncodeError.
     """
-    awkward = tmp_path / os.fsdecode(b"raw\xff name")
     try:
+        # Building the name is itself platform-dependent: os.fsdecode is total
+        # on POSIX, where surrogateescape absorbs any byte, but Windows decodes
+        # with surrogatepass and a lone 0xff is not valid UTF-8 to begin with.
+        awkward = tmp_path / os.fsdecode(b"raw\xff name")
         awkward.mkdir()
-    except (UnicodeEncodeError, OSError):
-        pytest.skip("filesystem rejects non-UTF-8 names")
+    except (UnicodeDecodeError, UnicodeEncodeError, OSError):
+        pytest.skip("this platform cannot represent a non-UTF-8 name")
     db_path = awkward / "google_health.db"
     db.get_db(db_path).close()
 
@@ -970,11 +973,20 @@ def test_the_port_probed_is_the_one_the_callback_listens_on(setup_paths, monkeyp
     binding the real one: the real port may legitimately be in use on the
     machine running the tests, which would make this pass for the wrong
     reason.
+
+    The holder asks for address reuse and listens because that is the state
+    `auth` leaves the port in - http.server.HTTPServer sets
+    `allow_reuse_address` and binds through it. The reuse is the part that
+    matters: a holder without it is one Windows never lets a probe bind over,
+    so the probe's own request for reuse would go unexercised and this would
+    pass over a check that can never fire there.
     """
     import socket
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         occupied.bind(("localhost", 0))
+        occupied.listen(1)
         monkeypatch.setattr(doctor.config, "GOOGLE_CALLBACK_PORT", occupied.getsockname()[1])
 
         findings = _findings_named(doctor.check_auth_prerequisites(), "auth callback")

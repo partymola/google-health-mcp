@@ -888,7 +888,14 @@ def check_auth_prerequisites() -> list[Finding]:
 
     findings = []
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Here SO_REUSEADDR only means "ignore a TIME_WAIT socket left by the
+        # last auth run". Windows reads it as permission to bind over a live
+        # listener, and the callback server sets it too, so with it set the
+        # check could never fire there. Without it a recently closed auth run
+        # reads as busy for a few minutes, which on a WARN is the better half
+        # of the trade.
+        if sys.platform != "win32":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind(("localhost", config.GOOGLE_CALLBACK_PORT))
         except OSError:
@@ -896,11 +903,13 @@ def check_auth_prerequisites() -> list[Finding]:
                 Finding(
                     "auth callback",
                     WARN,
-                    f"Port {config.GOOGLE_CALLBACK_PORT} is in use, so `google-health-mcp auth` "
-                    "cannot receive the OAuth callback.",
+                    f"Port {config.GOOGLE_CALLBACK_PORT} appears to be in use, so "
+                    "`google-health-mcp auth` cannot receive the OAuth callback.",
                     "Free the port before authorising. A Desktop client registers no "
                     "redirect URI, so nothing at Google holds this number - it is fixed "
-                    "by this package and the flow cannot use another.",
+                    "by this package and the flow cannot use another. On Windows, if "
+                    "nothing is listening, a socket from a recent `google-health-mcp "
+                    "auth` may still be closing - retry in a few minutes.",
                 )
             )
 

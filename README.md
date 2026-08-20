@@ -46,7 +46,7 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 
 ## Requirements
 
-- Python 3.13+ (tested on 3.13 and 3.14 in CI)
+- Python 3.13+ (tested on 3.13 and 3.14, on Linux, macOS and Windows, in CI)
 - A Google account with health data, and a Google Cloud project to authorise against. **No billing account is needed** - the console offers a free trial throughout setup and you can decline all of it.
 
 ## Setup
@@ -91,7 +91,7 @@ google-health-mcp auth
 
 Your browser will warn that **Google hasn't verified this app**. That is expected, and the app is your own: these health scopes are classified restricted, and verification only matters above 100 users. Click **Advanced**, then **Go to google-health-mcp (unsafe)**, and grant the scopes.
 
-The flow listens on `localhost:8081` for the callback, so that port must be free. It saves tokens to `~/.config/google-health-mcp/google_tokens.json` with 0600 permissions. Access tokens last an hour and refresh automatically. Refresh tokens do not rotate, so a token minted on a machine with a browser can be copied to a headless one.
+The flow listens on `localhost:8081` for the callback, so that port must be free. It saves tokens to `~/.config/google-health-mcp/google_tokens.json`, created 0600 on POSIX - Windows ignores the mode and governs access by ACLs. Access tokens last an hour and refresh automatically. Refresh tokens do not rotate, so a token minted on a machine with a browser can be copied to a headless one.
 
 **If you authorised before publishing the app**, re-run `google-health-mcp auth` afterwards: publishing does not extend a token already granted, and that one still expires after seven days.
 

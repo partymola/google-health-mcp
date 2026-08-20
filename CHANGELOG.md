@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased - 1.1.1
+
+### Fixed
+
+- On Windows, `google-health-mcp doctor` reports a busy OAuth callback port instead of always calling it free. The check binds the port to see whether anything holds it, and it asked for address reuse so that a socket left closing by the previous `google-health-mcp auth` would not read as a conflict. Windows treats that request as permission to bind over a listener that is genuinely there, so the check could never fire and a user whose port was taken was told it was free. It is now asked for only where it means what it is for, which on Windows trades that for a port reading as busy for a few minutes after authorising.
+
+### Packaging
+
+- The package declares `Operating System :: OS Independent`, and CI runs the suite on Linux, macOS and Windows. It had only ever been tested on Linux while claiming every platform.
+
 ## 1.1.0 - 2026-08-20
 
 ### Added
