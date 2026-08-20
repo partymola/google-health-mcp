@@ -91,7 +91,7 @@ google-health-mcp auth
 
 Your browser will warn that **Google hasn't verified this app**. That is expected, and the app is your own: these health scopes are classified restricted, and verification only matters above 100 users. Click **Advanced**, then **Go to google-health-mcp (unsafe)**, and grant the scopes.
 
-The flow listens on `localhost:8081` for the callback, so that port must be free. It saves tokens to `~/.config/google-health-mcp/google_tokens.json`, created 0600 on POSIX - Windows ignores the mode and governs access by ACLs. Access tokens last an hour and refresh automatically. Refresh tokens do not rotate, so a token minted on a machine with a browser can be copied to a headless one.
+The flow listens on `localhost:8081` for the callback, so that port must be free. It saves tokens to `~/.config/google-health-mcp/google_tokens.json`, created 0600 on POSIX. Windows keeps only the owner-write bit, as its read-only attribute, and governs access by ACLs - so there the file is not restricted to your account, and what it grants is whatever its directory's ACLs pass down. Access tokens last an hour and refresh automatically. Refresh tokens do not rotate, so a token minted on a machine with a browser can be copied to a headless one.
 
 **If you authorised before publishing the app**, re-run `google-health-mcp auth` afterwards: publishing does not extend a token already granted, and that one still expires after seven days.
 
@@ -109,7 +109,7 @@ Running it with `uvx` instead: `claude mcp add -s user google-health -- uvx goog
 google-health-mcp doctor
 ```
 
-Worth running before step 3 (Authorise) as well as after: it reports whether port 8081 is free and whether this host can open a browser, which are the two ways `auth` fails before it starts.
+Worth running before step 3 (Authorise) as well as after: it reports whether port 8081 can be bound and whether this host can open a browser, which are the two ways `auth` fails before it starts.
 
 Offline and read-only: it reports which paths resolved where, whether the credential files are the right shape, whether the token is short-lived, and whether the cache is being kept up to date.
 

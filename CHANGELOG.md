@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- On Windows, `google-health-mcp doctor` reports a busy OAuth callback port instead of always calling it free. The check binds the port to see whether anything holds it, and it asked for address reuse so that a socket left closing by the previous `google-health-mcp auth` would not read as a conflict. Windows treats that request as permission to bind over a listener that is genuinely there, so the check could never fire and a user whose port was taken was told it was free. It is now asked for only where it means what it is for, which on Windows trades that for a port reading as busy for a few minutes after authorising.
+- On Windows, `google-health-mcp doctor` no longer reports the OAuth callback port free while an earlier `google-health-mcp auth` still holds it. The check binds the port to see whether anything is there, and it asked for address reuse so that a socket left closing by the previous `auth` run would not read as a conflict. Windows grants that request against a socket that asked for reuse itself - which this package's own callback server does - so the one holder the check most needed to see was the one it could bind straight over. A port held by an unrelated process was reported correctly throughout. Reuse is now asked for only where it means what it is for, which on Windows trades that for the port reading as busy for a few minutes after authorising.
 
 ### Packaging
 

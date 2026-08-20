@@ -720,6 +720,10 @@ def test_reports_an_unwritable_token_file(setup_paths):
     sys.platform != "win32" and os.geteuid() == 0,
     reason="root bypasses file permission bits",
 )
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="a Windows directory cannot be made read-only, so the case cannot be built",
+)
 def test_a_read_only_config_directory_is_not_a_problem(setup_paths):
     """auth.py rewrites the token file in place, so only the file must be writable."""
     config_dir, _db_path = setup_paths
@@ -976,10 +980,13 @@ def test_the_port_probed_is_the_one_the_callback_listens_on(setup_paths, monkeyp
 
     The holder asks for address reuse and listens because that is the state
     `auth` leaves the port in - http.server.HTTPServer sets
-    `allow_reuse_address` and binds through it. The reuse is the part that
-    matters: a holder without it is one Windows never lets a probe bind over,
-    so the probe's own request for reuse would go unexercised and this would
-    pass over a check that can never fire there.
+    `allow_reuse_address` and binds through it. Both lines are load-bearing,
+    for different platforms. Drop the reuse and Windows never lets a probe
+    bind over the holder, so the probe's own request for it goes unexercised
+    and this passes over a check that cannot fire there. Drop the listen and
+    Linux lets a reuse-requesting probe bind over a reuse-requesting socket
+    that is merely bound - measured - so the port reads as free and this
+    fails.
     """
     import socket
 
@@ -993,6 +1000,33 @@ def test_the_port_probed_is_the_one_the_callback_listens_on(setup_paths, monkeyp
 
     assert findings and findings[0].severity == doctor.WARN
     assert "cannot receive the OAuth callback" in findings[0].detail
+
+
+def test_a_free_callback_port_is_silent(setup_paths):
+    """The other direction, and the one nothing else here can see.
+
+    Every other callback assertion is that a held port is reported, which is
+    equally true of a check wired to report unconditionally. This is the half
+    that says `doctor` stays quiet when `auth` would actually work, and it
+    earns its own test because not asking for address reuse on Windows buys a
+    window in which a recently closed `auth` run reads as busy - so the
+    false-positive direction is the one now worth guarding.
+
+    `setup_paths` is not decoration: `check_auth_prerequisites` returns
+    nothing at all in offline mode, so without it this could pass by not
+    running.
+    """
+    import socket
+
+    # The real port may legitimately be held by something on whichever machine
+    # this runs on, and six CI runners is six chances of it.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("localhost", doctor.config.GOOGLE_CALLBACK_PORT))
+        except OSError:
+            pytest.skip("callback port already in use by something else")
+
+    assert not _findings_named(doctor.check_auth_prerequisites(), "auth callback")
 
 
 def test_an_empty_path_variable_is_not_reported_as_the_default(setup_paths, monkeypatch):
