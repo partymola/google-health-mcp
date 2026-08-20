@@ -1,5 +1,6 @@
 """Tests for the google-health-mcp command-line entry point."""
 
+import json
 from importlib.metadata import version
 from unittest.mock import patch
 
@@ -86,3 +87,42 @@ def test_sync_refuses_in_offline_mode(capsys, monkeypatch):
 
     assert exc_info.value.code == 1
     assert "GOOGLE_HEALTH_MCP_OFFLINE" in capsys.readouterr().err
+
+
+@pytest.fixture
+def one_ok_finding(monkeypatch):
+    """Stub the checks out, so these tests exercise the CLI wiring alone.
+
+    Left real they would read whatever `config.DB_PATH` resolves to and bind the
+    callback port - harmless under an isolated HOME and a developer's live cache
+    without one. Nothing here is about what the checks find.
+    """
+    from google_health_mcp import doctor
+
+    monkeypatch.setattr(
+        doctor, "run_checks", lambda: [doctor.Finding("a check", doctor.OK, "detail")]
+    )
+
+
+def test_doctor_without_json_prints_the_text_report(capsys, one_ok_finding):
+    """The flag is the only surface an external monitor touches, so its wiring
+    needs pinning at the CLI and not just at `run_doctor`: dropping the argument
+    at the call site, deleting it from the parser, or inverting it to
+    `store_false` all pass every test one layer down."""
+    with patch("sys.argv", ["google-health-mcp", "doctor"]):
+        with pytest.raises(SystemExit):
+            cli.main()
+
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(capsys.readouterr().out)
+
+
+def test_doctor_json_flag_emits_json_on_stdout(capsys, one_ok_finding):
+    with patch("sys.argv", ["google-health-mcp", "doctor", "--json"]):
+        with pytest.raises(SystemExit):
+            cli.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "counts" in payload
+    assert "findings" in payload
+    assert payload["version"] == version("google-health-mcp")

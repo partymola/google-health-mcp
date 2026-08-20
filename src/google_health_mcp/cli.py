@@ -74,6 +74,11 @@ def main():
         "doctor", help="Check the setup and report what needs fixing"
     )
     _add_version_argument(doctor_parser)
+    doctor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit findings as JSON for a monitor to consume, instead of a report",
+    )
 
     sync_parser = subparsers.add_parser("sync", help="Sync health data to local SQLite cache")
     _add_version_argument(sync_parser)
@@ -128,7 +133,7 @@ def main():
     elif args.cmd == "doctor":
         from .doctor import run_doctor
 
-        sys.exit(run_doctor())
+        sys.exit(run_doctor(as_json=args.json))
 
     elif args.cmd == "sync":
         if config.OFFLINE_MODE:

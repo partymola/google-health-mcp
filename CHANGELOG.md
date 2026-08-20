@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.1.0 - 2026-08-20
+
+### Added
+
+- `doctor --json` emits the findings as JSON on stdout, for a monitor rather than a person. Each finding carries a `check` field: a stable identifier to match on, since `name` is prose and interpolates the data type. `stopped-series` is the first, because a stopped data series is graded a warning and `doctor` exits non-zero only on a failure, so the exit code cannot carry the one condition an external monitor most needs. The exit code is unchanged in both formats.
+- The JSON payload names the package version that produced it. Without it a consumer cannot tell "no stopped series" from "this build has no such check": an earlier release omits the `check` field entirely, and one earlier still rejects `--json` and exits 2.
+
 ## 1.0.0 - 2026-08-20
 
 ### Added

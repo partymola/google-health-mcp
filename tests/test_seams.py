@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import tomllib
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -527,3 +528,49 @@ class TestTheMigrationLockstep:
         )
         assert tmp_db.execute("SELECT COUNT(*) FROM core_temperature").fetchone()[0] == 1
         assert seen == [], "save_core_temperature must not upsert"
+
+
+def test_the_readme_json_example_matches_what_doctor_emits():
+    """The README's `doctor --json` example restates the payload's key set and
+    the one slug a consumer matches on.
+
+    A paired fact edited on one side only is this repo's most repeated defect,
+    and here the reader is a program author copying key names: a renamed key
+    leaves the example silently wrong and their parser reading `None` for a
+    field that moved.
+
+    Scope, deliberately narrow: the first json fence containing `findings`, and
+    its first finding. A second example finding, or another such fence added
+    above it, would go unchecked - widen this if the README grows one.
+    """
+    readme = (Path(google_health_mcp.__file__).parents[2] / "README.md").read_text()
+    fences = re.findall(r"```json\n(.*?)```", readme, re.S)
+    documented = next(
+        (json.loads(f) for f in fences if '"findings"' in f),
+        None,
+    )
+    assert documented is not None, "the README no longer shows a doctor --json example"
+
+    emitted = json.loads(
+        doctor.format_json(
+            [
+                doctor.Finding(
+                    "hrv series", doctor.WARN, "detail", "fix", check=doctor.STOPPED_SERIES
+                )
+            ]
+        )
+    )
+
+    assert set(documented) == set(emitted), "the README's top-level keys have drifted"
+    assert set(documented["counts"]) == set(emitted["counts"])
+    assert set(documented["findings"][0]) == set(emitted["findings"][0])
+    assert documented["findings"][0]["check"] == doctor.STOPPED_SERIES
+
+    # The version is the one VALUE that is checked, because it is the one the
+    # README tells a consumer to gate on and the one that goes stale on every
+    # release by construction. The counts beside it are illustrative and are
+    # deliberately not compared.
+    assert documented["version"] == version("google-health-mcp"), (
+        "the README's example payload names a different version than this build - "
+        "update it as part of the release"
+    )

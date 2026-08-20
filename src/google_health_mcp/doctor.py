@@ -25,6 +25,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import quote
 
@@ -35,6 +36,11 @@ WARN = "warn"
 FAIL = "fail"
 
 _SEVERITY_MARK = {OK: "ok  ", WARN: "warn", FAIL: "FAIL"}
+
+# Machine-stable check identifiers. A monitor outside this package matches on
+# these, so they are part of the interface: adding one is free, changing one is
+# a breaking change that fails silently at the consumer.
+STOPPED_SERIES = "stopped-series"
 
 # Google refresh tokens expire after six months of disuse. The file is
 # rewritten on every access-token refresh, so an untouched one means nothing
@@ -64,6 +70,13 @@ class Finding:
     severity: str
     detail: str
     fix: str | None = None
+    # A stable identifier for machine consumers, emitted by `doctor --json`.
+    # `name` is prose meant for a person and carries the data type where there
+    # is one, so it is not something a script can match on; this is. Set it on
+    # any finding a program needs to recognise, and never change one that has a
+    # consumer - renaming it silently breaks them, since a missing key reads as
+    # "that condition is absent" rather than as an error.
+    check: str | None = None
 
 
 def _open_db_readonly(path: Path) -> closing:
@@ -738,6 +751,7 @@ def _check_stopped_series(conn: sqlite3.Connection, newest: dict[str, str]) -> l
                 f"Re-sync that type alone (`google-health-mcp sync --types {data_type} "
                 f"--since {newest[data_type]}`); if it stays empty, the data may have "
                 "stopped at the source.",
+                check=STOPPED_SERIES,
             )
         )
     return findings
@@ -956,7 +970,62 @@ def format_report(findings: list[Finding]) -> str:
     return "\n".join(lines)
 
 
-def run_doctor() -> int:
+def _package_version() -> str | None:
+    """The installed distribution's version, or None when there is none.
+
+    Run from a source tree with no installed metadata, `version()` raises. The
+    text report survives that because `run_checks` catches broadly; this path
+    sits outside it, so an unguarded lookup would make `--json` the one mode
+    that dies on a half-broken install - which is the setup a diagnostic exists
+    to describe.
+    """
+    try:
+        return version("google-health-mcp")
+    except PackageNotFoundError:
+        return None
+
+
+def format_json(findings: list[Finding]) -> str:
+    """The same findings as machine-readable JSON.
+
+    `check` is the field a program should match on; it is null for findings
+    nothing consumes yet. Severities are the same three strings the text report
+    grades on, so a consumer never has to parse prose.
+    """
+    return json.dumps(
+        {
+            # The build that produced this payload. A consumer cannot otherwise
+            # tell "no stopped series" from "this build predates the slug": an
+            # older release has no `check` field at all, and one older still
+            # rejects `--json` outright. Absence of a key is not absence of a
+            # condition, and only the version distinguishes them.
+            "version": _package_version(),
+            "findings": [
+                {
+                    "check": f.check,
+                    "name": f.name,
+                    "severity": f.severity,
+                    "detail": f.detail,
+                    "fix": f.fix,
+                }
+                for f in findings
+            ],
+            "counts": {
+                severity: sum(1 for f in findings if f.severity == severity)
+                for severity in (OK, WARN, FAIL)
+            },
+        },
+        indent=2,
+    )
+
+
+def run_doctor(*, as_json: bool = False) -> int:
+    """Report on the setup. Exit 1 on FAIL only, whichever format is asked for.
+
+    A warning must not change the exit code: `--json` exists so a consumer can
+    act on a WARN it cares about, and grading warnings as failures here would
+    make every caller that only checks the status treat them as blocking.
+    """
     findings = run_checks()
-    print(format_report(findings))
+    print(format_json(findings) if as_json else format_report(findings))
     return 1 if any(f.severity == FAIL for f in findings) else 0

@@ -54,7 +54,7 @@ Tests are fully offline - no real API calls, no real tokens. Fixtures use fictio
 
 ## Releases (maintainers)
 
-1. Bump `version` in `pyproject.toml`, run `uv lock` so the tracked lockfile records the new version, and turn the `## Unreleased - X.Y.Z` CHANGELOG heading into `## X.Y.Z - YYYY-MM-DD`. Headings carry no link references: an undefined one renders as literal brackets, which is what a deleted release history leaves behind.
+1. Bump `version` in `pyproject.toml`, run `uv lock` so the tracked lockfile records the new version, update the `"version"` in the README's `doctor --json` example payload, and turn the `## Unreleased - X.Y.Z` CHANGELOG heading into `## X.Y.Z - YYYY-MM-DD`. Headings carry no link references: an undefined one renders as literal brackets, which is what a deleted release history leaves behind. The lockfile and the README example are both checked by tests, so a missed one fails rather than shipping stale - the README's matters because the surrounding text tells a consumer to gate on that field.
 2. If `db.SCHEMA` differs in tables or columns from the newest file in `tests/schema_baselines/`, copy it in as `X.Y.Z.sql`. That file is what proves the next release's migrations reach a database created by this one. Never edit one already there.
 3. Push to `main` and wait for CI to pass on that commit.
 4. Tag it `vX.Y.Z` and push the tag by name.

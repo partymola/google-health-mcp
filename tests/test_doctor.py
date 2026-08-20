@@ -13,6 +13,7 @@ import sys
 import time
 from contextlib import contextmanager
 from datetime import date, timedelta
+from importlib.metadata import PackageNotFoundError, version
 
 import pytest
 
@@ -113,11 +114,19 @@ def test_does_not_modify_an_existing_database(setup_paths, tmp_path):
 # --- Invariant 2: doctor never prints secret values ---
 
 
-def test_never_prints_token_or_secret_values(setup_paths, capsys):
+@pytest.mark.parametrize("as_json", [False, True])
+def test_never_prints_token_or_secret_values(setup_paths, capsys, as_json):
+    """Both output formats, driven through the real credential files.
+
+    The JSON payload is a second surface onto the same findings, so it inherits
+    this rule rather than getting a pin of its own - a test that builds its own
+    findings never puts a secret anywhere and would pass over code that dumped
+    the whole token file.
+    """
     config_dir, _db_path = setup_paths
     _write_credentials(config_dir)
 
-    doctor.run_doctor()
+    doctor.run_doctor(as_json=as_json)
 
     out = capsys.readouterr()
     combined = out.out + out.err
@@ -1294,3 +1303,144 @@ class TestASeriesThatHasStopped:
         findings = doctor.run_checks()
 
         assert not [f for f in findings if "skin_temperature" in f.detail]
+
+
+class TestTheMachineReadableReport:
+    """`doctor --json` exists so a monitor can act on a WARN it cares about.
+
+    The text report grades a stopped series `warn`, and `doctor` exits 1 only
+    on `fail`, so the exit code cannot carry that condition. Everything here
+    protects the contract an outside consumer depends on: a stable key to match
+    on, and an exit code that does not move when a warning appears.
+    """
+
+    def _findings(self, *severities):
+        return [
+            doctor.Finding(f"check {i}", severity, "detail")
+            for i, severity in enumerate(severities)
+        ]
+
+    def test_the_json_report_parses_and_holds_every_finding(self):
+        findings = self._findings(doctor.OK, doctor.WARN, doctor.FAIL)
+
+        payload = json.loads(doctor.format_json(findings))
+
+        assert len(payload["findings"]) == len(findings)
+        assert payload["counts"] == {doctor.OK: 1, doctor.WARN: 1, doctor.FAIL: 1}
+
+    def test_every_finding_field_survives_the_round_trip(self):
+        finding = doctor.Finding("a name", doctor.WARN, "a detail", "a fix", check="a-check")
+
+        [emitted] = json.loads(doctor.format_json([finding]))["findings"]
+
+        assert emitted == {
+            "check": "a-check",
+            "name": "a name",
+            "severity": doctor.WARN,
+            "detail": "a detail",
+            "fix": "a fix",
+        }
+
+    def test_a_finding_nothing_consumes_still_carries_the_key_as_null(self):
+        """A missing key and a null one read the same to a careless consumer,
+        but only one of them survives a schema check - emit it always."""
+        [emitted] = json.loads(doctor.format_json(self._findings(doctor.OK)))["findings"]
+
+        assert "check" in emitted
+        assert emitted["check"] is None
+
+    @pytest.mark.parametrize("as_json", [False, True])
+    def test_a_warning_does_not_change_the_exit_code(self, monkeypatch, capsys, as_json):
+        monkeypatch.setattr(doctor, "run_checks", lambda: self._findings(doctor.WARN))
+
+        assert doctor.run_doctor(as_json=as_json) == 0
+        capsys.readouterr()
+
+    @pytest.mark.parametrize("as_json", [False, True])
+    def test_a_failure_does(self, monkeypatch, capsys, as_json):
+        monkeypatch.setattr(doctor, "run_checks", lambda: self._findings(doctor.FAIL))
+
+        assert doctor.run_doctor(as_json=as_json) == 1
+        capsys.readouterr()
+
+    def test_the_flag_actually_selects_the_format(self, monkeypatch, capsys):
+        """Testing `format_json` directly proves the formatter, not the wiring.
+
+        Without this, `run_doctor` could ignore `as_json` entirely and print the
+        text report to a consumer expecting JSON - every exit-code assertion
+        above still passes, and the failure surfaces as a parse error in
+        somebody else's monitor.
+        """
+        monkeypatch.setattr(doctor, "run_checks", lambda: self._findings(doctor.OK))
+
+        doctor.run_doctor(as_json=True)
+        as_json_out = capsys.readouterr().out
+        doctor.run_doctor(as_json=False)
+        as_text_out = capsys.readouterr().out
+
+        assert json.loads(as_json_out)["counts"][doctor.OK] == 1
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(as_text_out)
+
+    def test_the_stopped_series_finding_carries_its_stable_check_name(self, setup_paths):
+        """The one key an outside monitor matches on.
+
+        `name` is prose and carries the data type, so it cannot be matched on.
+        If this slug changes, every consumer silently stops seeing the
+        condition - a missing key reads as "no stopped series", not as an error.
+        """
+        _config_dir, db_path = setup_paths
+        db_path.parent.mkdir(parents=True)
+        conn = db.get_db(db_path)
+        start = date(2026, 3, 1)
+        days = [(start + timedelta(days=i)).isoformat() for i in range(30)]
+        later = [(start + timedelta(days=i)).isoformat() for i in range(50)]
+        for day in days:
+            db.save_hrv(conn, {"date": day, "daily_rmssd": 30.0})
+        for day in later:
+            db.save_sleep(conn, {"date": day, "total_minutes": 420})
+        conn.commit()
+        conn.close()
+
+        findings = doctor.run_checks()
+
+        stopped = [f for f in findings if f.check == doctor.STOPPED_SERIES]
+        assert stopped, "the stopped-series finding lost its machine-readable check name"
+        assert all(f.severity == doctor.WARN for f in stopped)
+
+    def test_the_stopped_series_slug_is_the_literal_consumers_match_on(self):
+        """Its own test, so an earlier failure in the class cannot hide a
+        rename - this is the only place the literal itself is pinned."""
+        assert doctor.STOPPED_SERIES == "stopped-series"
+
+    def test_the_payload_names_the_build_that_produced_it(self):
+        """Without it a consumer cannot tell "no stopped series" from "this
+        build has no such check": an older release omits the key entirely, and
+        one older still rejects `--json` and exits 2.
+
+        A round trip against the same source, so it pins that the key exists and
+        tracks this package's metadata - not that the metadata is right.
+        """
+        payload = json.loads(doctor.format_json([]))
+
+        assert payload["version"] == version("google-health-mcp")
+
+    def test_a_tree_with_no_installed_metadata_still_produces_a_payload(self, monkeypatch):
+        """`--json` must not be the one mode that dies on a half-broken install.
+
+        Run from a source checkout with no distribution metadata the version
+        lookup raises, and this path sits outside the catch-all that keeps the
+        text report alive - so an unguarded lookup would traceback and emit
+        nothing, exactly when a diagnostic is most wanted. The key stays present
+        and null rather than disappearing, for the same reason `check` does.
+        """
+
+        def no_metadata(_name):
+            raise PackageNotFoundError(_name)
+
+        monkeypatch.setattr(doctor, "version", no_metadata)
+
+        payload = json.loads(doctor.format_json(self._findings(doctor.OK)))
+
+        assert payload["version"] is None
+        assert payload["counts"][doctor.OK] == 1

@@ -113,6 +113,34 @@ Worth running before step 3 (Authorise) as well as after: it reports whether por
 
 Offline and read-only: it reports which paths resolved where, whether the credential files are the right shape, whether the token is short-lived, and whether the cache is being kept up to date.
 
+`doctor --json` reports the same findings for a monitor to act on:
+
+```json
+{
+  "version": "1.1.0",
+  "findings": [
+    {
+      "check": "stopped-series",
+      "name": "hrv series",
+      "severity": "warn",
+      "detail": "No hrv since 2026-03-30, after rows on 28 of the 30 days before that.",
+      "fix": "Re-sync that type alone (...)"
+    }
+  ],
+  "counts": {"ok": 7, "warn": 1, "fail": 0}
+}
+```
+
+The payload goes to stdout; logging goes to stderr, so a `subprocess` consumer should read the two separately.
+
+Match on `check`, never on `name` or `detail`: the first is a stable identifier, the other two are prose and carry the data type. `check` is `null` for findings nothing consumes programmatically yet.
+
+**The exit code is 1 only when something is graded `fail`**, in both formats - a warning never changes it, which is the reason this flag exists: a stopped data series is a warning, so the exit code alone cannot tell you about the one failure most worth watching for.
+
+**Check `version` before trusting an absent `check`.** A release older than this one omits the field entirely and an older one still rejects `--json` and exits 2, so "no `stopped-series` finding" and "this build cannot report one" look identical without it. `version` is itself `null` when the package is run from a source tree with no installed distribution metadata - the payload is still emitted, since a diagnostic that dies on a half-configured install is worthless exactly when it is needed.
+
+The payload names the resolved config, database and credential paths, the same way the text report does. That is deliberate - it is what makes a wrong-path setup diagnosable - but a consumer that forwards the payload off the machine is disclosing them. No credential *values* appear in either format.
+
 ### 6. First sync (optional)
 
 Query tools sync on first use each day, so you can skip this. To pre-populate the cache, or to pull history older than it:
@@ -129,6 +157,9 @@ google-health-mcp                Start the MCP server (stdio transport)
 google-health-mcp -V, --version  Print the installed package version
 google-health-mcp auth           Interactive OAuth setup
 google-health-mcp doctor         Check the setup and report what needs fixing
+  --json                Emit the findings as JSON, for a monitor rather than
+                        a person. Each finding carries a stable `check` name
+                        to match on; the exit code is the same either way.
 google-health-mcp sync           Sync data to the local cache
   --days N              Days of history for a first sync (default: 30)
   --types TYPE,...      Data types to sync (default: all). One or more of:
