@@ -14,6 +14,7 @@ import logging
 import os
 import secrets
 import shutil
+import socket
 import sys
 import threading
 import time
@@ -33,6 +34,28 @@ logger = logging.getLogger(__name__)
 # with no opinion about the grant, and this client already reads 403 on a data
 # request as something else entirely.
 _REFUSAL_CODES = frozenset({400, 401})
+
+
+class _CallbackServer(HTTPServer):
+    """Refuse to share the port the authorisation code arrives on.
+
+    Deliberate, and not what `HTTPServer` does by default: it asks for address
+    reuse, which on Windows is what lets another process bind over this
+    listener and take the code. Not asking is the fix; the exclusive-use
+    option is asked for as well. Why each half is there, and what it costs, is
+    in AGENTS.md. Pinned by TestTheCallbackPortIsNotShared, which drives this
+    method's Windows branch on a POSIX runner.
+    """
+
+    allow_reuse_address = sys.platform != "win32"
+    # SO_REUSEPORT is the POSIX-side version of the same hazard; nothing sets
+    # this, and nothing should.
+    allow_reuse_port = False
+
+    def server_bind(self):
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 class TokenRefused(RuntimeError):
@@ -366,11 +389,27 @@ def setup_google_auth():
             pass
 
     auth_url = _google_auth_url(challenge, client["client_id"])
+
+    # Bind before opening the browser: the listener no longer asks to share the
+    # port, so a busy one is now a real failure, and sending the user to an
+    # authorisation page whose redirect has nowhere to land wastes the attempt.
+    try:
+        server = _CallbackServer(("localhost", config.GOOGLE_CALLBACK_PORT), CallbackHandler)
+    except OSError as e:
+        print(
+            f"Port {config.GOOGLE_CALLBACK_PORT} could not be bound ({type(e).__name__}), so "
+            "the OAuth callback cannot be received. A Desktop client registers no redirect "
+            "URI, so nothing at Google holds this number - it is fixed by this package and "
+            "the flow cannot use another. On Windows a socket from a recent "
+            "`google-health-mcp auth` may still be closing; retry once it has.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     print("\nOpening browser for Google authorisation...")
     print(f"If it doesn't open, visit:\n{auth_url}\n")
     webbrowser.open(auth_url)
 
-    server = HTTPServer(("localhost", config.GOOGLE_CALLBACK_PORT), CallbackHandler)
     thread = threading.Thread(target=server.handle_request, daemon=True)
     thread.start()
     thread.join(timeout=120)

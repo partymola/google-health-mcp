@@ -9,11 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- On Windows, `google-health-mcp doctor` no longer reports the OAuth callback port free while an earlier `google-health-mcp auth` still holds it. The check binds the port to see whether anything is there, and it asked for address reuse so that a socket left closing by the previous `auth` run would not read as a conflict. Windows grants that request against a socket that asked for reuse itself - which this package's own callback server does - so the one holder the check most needed to see was the one it could bind straight over. A port held by an unrelated process was reported correctly throughout. Reuse is now asked for only where it means what it is for, which on Windows trades that for the port reading as busy for a few minutes after authorising.
+- On Windows, `google-health-mcp doctor` no longer reports the OAuth callback port free while an earlier `google-health-mcp auth` still holds it. The check binds the port to see whether anything is there, and it asked for address reuse so that a socket left closing by the previous `auth` run would not read as a conflict. Windows grants that request against a socket that asked for reuse itself - which the callback server did until this release - so the one holder the check most needed to see was the one it could bind straight over. A port held by an unrelated process was reported correctly throughout. Reuse is now asked for only where it means what it is for, which on Windows trades that for the port reading as busy for a few minutes after authorising.
+- `google-health-mcp auth` reports a busy callback port instead of ending in a traceback, and binds it before opening the browser rather than after, so a run that cannot receive the callback does not send you to an authorisation page first.
 
 ### Packaging
 
 - The package declares `Operating System :: OS Independent`, and CI runs the suite on Linux, macOS and Windows. It had only ever been tested on Linux while claiming every platform.
+
+### Security
+
+- On Windows, `google-health-mcp auth` no longer lets another process take over the port the authorisation code arrives on. The callback listener inherited `allow_reuse_address` from `http.server`, which on POSIX only waives the wait after a previous run. Windows reads it as consent to be displaced, so another process could bind over the live listener and receive the callback - and the code it carries is enough to obtain the tokens. The listener no longer asks to share the address, which is what closes it, and asks for exclusive use as well. The cost is Windows-only: after a run the port stays held until the previous connection has finished closing, normally a couple of minutes, and `auth` has to be retried until it has. Nothing changes on Linux or macOS.
 
 ## 1.1.0 - 2026-08-20
 

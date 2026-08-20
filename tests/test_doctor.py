@@ -978,15 +978,14 @@ def test_the_port_probed_is_the_one_the_callback_listens_on(setup_paths, monkeyp
     machine running the tests, which would make this pass for the wrong
     reason.
 
-    The holder asks for address reuse and listens because that is the state
-    `auth` leaves the port in - http.server.HTTPServer sets
-    `allow_reuse_address` and binds through it. Both lines are load-bearing,
-    for different platforms. Drop the reuse and Windows never lets a probe
-    bind over the holder, so the probe's own request for it goes unexercised
-    and this passes over a check that cannot fire there. Drop the listen and
-    Linux lets a reuse-requesting probe bind over a reuse-requesting socket
-    that is merely bound - measured - so the port reads as free and this
-    fails.
+    The holder asks for address reuse and listens because that is the hardest
+    holder for the probe to see, not because a real one must ask for either.
+    Both lines are load-bearing, for different platforms. Drop the reuse and
+    Windows never lets a probe bind over the holder, so the probe's own
+    request for it goes unexercised and this passes over a check that cannot
+    fire there. Drop the listen and Linux lets a reuse-requesting probe bind
+    over a reuse-requesting socket that is merely bound - measured - so the
+    port reads as free and this fails.
     """
     import socket
 

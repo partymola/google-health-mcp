@@ -2,11 +2,13 @@
 
 import json
 import os
+import socket
 import sys
 import time
 
 import pytest
 
+from google_health_mcp import auth
 from google_health_mcp.auth import _generate_pkce, _load_json, _save_json, refresh_google_token
 
 # Not `hasattr(os, "fchmod")`: CPython 3.13 added os.fchmod on Windows, so that
@@ -409,3 +411,131 @@ class TestTheCallbackPage:
             }
         )
         assert not reached, f"reaches the live exception without binding it: {reached}"
+
+
+class _RecordingSocket:
+    """Stands in for the real socket so server_bind's Windows branch can run."""
+
+    def __init__(self):
+        self.calls = []
+
+    def setsockopt(self, level, option, value):
+        self.calls.append(("setsockopt", level, option, value))
+
+    def bind(self, address):
+        self.calls.append(("bind", address))
+
+    def getsockname(self):
+        return ("127.0.0.1", 8081)
+
+
+class TestTheCallbackPortIsNotShared:
+    """The listener carries the authorisation code, so it must not be displaceable.
+
+    `server_bind` chooses on `sys.platform` at call time, so the Windows branch
+    is reachable from a POSIX runner against a recording socket. That is worth
+    more than reading the source for it: source assertions here let the option
+    be set after the bind, at the wrong level, on the wrong socket, or with a
+    value of 0, all of which pass a check that only looks for the name.
+    """
+
+    def _bind_as(self, platform, monkeypatch):
+        monkeypatch.setattr(auth.sys, "platform", platform)
+        # Absent on POSIX, so it has to be created rather than replaced.
+        monkeypatch.setattr(auth.socket, "SO_EXCLUSIVEADDRUSE", 0xFFFFFFFF, raising=False)
+        monkeypatch.setattr(auth.socket, "getfqdn", lambda host: host)
+
+        server = auth._CallbackServer.__new__(auth._CallbackServer)
+        server.socket = _RecordingSocket()
+        server.server_address = ("localhost", 8081)
+        # The class attribute is fixed at import against the real platform, so
+        # the value the other test pins is supplied here rather than read.
+        server.allow_reuse_address = platform != "win32"
+        server.allow_reuse_port = False
+        auth._CallbackServer.server_bind(server)
+        return server.socket.calls
+
+    def test_windows_asks_for_exclusive_use_before_binding(self, monkeypatch):
+        calls = self._bind_as("win32", monkeypatch)
+        assert calls[0] == (
+            "setsockopt",
+            socket.SOL_SOCKET,
+            auth.socket.SO_EXCLUSIVEADDRUSE,
+            1,
+        ), calls
+        assert ("bind", ("localhost", 8081)) in calls
+        # Never both: asking to share after asking not to is the configuration
+        # Microsoft documents as insecure.
+        assert not any(
+            call[:3] == ("setsockopt", socket.SOL_SOCKET, socket.SO_REUSEADDR) for call in calls
+        ), calls
+
+    def test_posix_asks_for_nothing_exclusive(self, monkeypatch):
+        calls = self._bind_as("linux", monkeypatch)
+        assert not any(
+            call[0] == "setsockopt" and call[2] == auth.socket.SO_EXCLUSIVEADDRUSE for call in calls
+        ), calls
+
+    def test_reuse_is_allowed_off_windows_and_refused_on_it(self):
+        """Not asking to share is the fix; the exclusive option is the belt.
+
+        The runtime value alone cannot see a revert to a bare `True`, because
+        that is what this platform is supposed to have, so the source form is
+        pinned with it.
+        """
+        import ast
+        import inspect
+
+        assert auth._CallbackServer.allow_reuse_address == (sys.platform != "win32")
+
+        tree = ast.parse(inspect.getsource(auth._CallbackServer))
+        assigned = [
+            ast.unparse(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(getattr(t, "id", None) == "allow_reuse_address" for t in node.targets)
+        ]
+        assert assigned, "allow_reuse_address is no longer set here"
+        assert all("platform" in value for value in assigned), assigned
+
+    def test_only_win32_is_named(self):
+        """`sys.platform` is `win32` on 64-bit Windows too, so a `win64` test
+        is a branch that never runs."""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(auth._CallbackServer))
+        compared = {
+            const.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Compare) and ast.unparse(node.left) == "sys.platform"
+            for const in node.comparators
+            if isinstance(const, ast.Constant)
+        }
+        assert compared == {"win32"}, compared
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="binds a real POSIX socket")
+    def test_it_still_binds(self):
+        """server_bind is overridden, so a mistake there breaks `auth` outright."""
+        server = auth._CallbackServer(("localhost", 0), auth.BaseHTTPRequestHandler)
+        try:
+            assert server.server_address[0] == "127.0.0.1"
+            assert server.server_address[1] != 0
+        finally:
+            server.server_close()
+
+    def test_no_bare_httpserver_is_constructed_anywhere(self):
+        """Scoped to the module, not to the setup flow: a second listener added
+        elsewhere would carry the default this class exists to refuse."""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(auth))
+        bare = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "HTTPServer"
+        ]
+        assert not bare, bare
