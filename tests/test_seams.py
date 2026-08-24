@@ -13,13 +13,14 @@ import sqlite3
 import subprocess
 import sys
 import tomllib
+import urllib.request
 from importlib.metadata import version
 from pathlib import Path
 
 import pytest
 
 import google_health_mcp
-from google_health_mcp import api, db, doctor
+from google_health_mcp import api, config, db, doctor, helpers
 
 _PATH_NAMES = {
     "CONFIG_DIR",
@@ -573,4 +574,77 @@ def test_the_readme_json_example_matches_what_doctor_emits():
     assert documented["version"] == version("google-health-mcp"), (
         "the README's example payload names a different version than this build - "
         "update it as part of the release"
+    )
+
+
+def test_the_suite_cannot_reach_the_network():
+    """Nothing else fails if the refusal is dropped, on any machine.
+
+    Everywhere else the refusal is either unreachable or absorbed by the code
+    under test, so this is the one run that reports it - and what it is
+    protecting, on a machine holding credentials, is the real account being
+    written into a test database.
+
+    The exception type is part of the claim. `Failed` derives from
+    `BaseException`, which is what carries it past the `except Exception` in
+    `refresh_google_token` and `auto_sync_if_stale`; an `AssertionError` here
+    is caught by the code under test and reported as a network failure.
+    """
+    with pytest.raises(pytest.fail.Exception, match="reached the network"):
+        urllib.request.urlopen("https://example.invalid")
+
+
+def test_the_suite_cannot_see_real_credentials():
+    """The other half of the harness, and it has its own failure modes.
+
+    The two equality assertions fail on any machine: `helpers` imports the
+    paths by value and keeps its own copies, so a fixture patching only
+    `config` leaves `require_auth` reading the real files while everything
+    else looks isolated. The existence assertions fail only where a
+    credential is actually present, which is the machine the isolation is
+    for - on CI there is nothing to see either way.
+    """
+    assert config.GOOGLE_TOKENS_PATH == helpers.GOOGLE_TOKENS_PATH
+    assert config.GOOGLE_CLIENT_PATH == helpers.GOOGLE_CLIENT_PATH
+    # Deleting the fixture outright leaves the two agreeing, and on a machine
+    # with no credential the existence checks below see nothing either - so
+    # this is the assertion that reports the deletion on CI.
+    assert helpers.GOOGLE_TOKENS_PATH.parent != config.CONFIG_DIR
+    assert not helpers.GOOGLE_TOKENS_PATH.exists()
+    assert not helpers.GOOGLE_CLIENT_PATH.exists()
+
+
+def test_only_the_expected_modules_hold_a_config_path():
+    """A module importing these by value escapes the fixture that patches them.
+
+    `_no_real_credentials` patches a fixed pair of modules, so a new one
+    binding `GOOGLE_TOKENS_PATH` at import keeps its own copy and goes on
+    reading the real file. That is not hypothetical: `helpers` did exactly
+    this, and nothing failed - on a machine with no credential there is
+    nothing to observe, and on one with a credential every other signal still
+    said the suite was isolated.
+
+    `db` holds `DB_PATH` and is deliberately not patched; the database is
+    isolated per test instead, which "Running tests" explains.
+    """
+    expected = {"db.py": ["DB_PATH"], "helpers.py": ["GOOGLE_CLIENT_PATH", "GOOGLE_TOKENS_PATH"]}
+    watched = {"DB_PATH", "GOOGLE_CLIENT_PATH", "GOOGLE_TOKENS_PATH"}
+    # Both spellings of the same import, and keyed by path rather than by
+    # stem: every module here uses the relative form today, and a `tools/db.py`
+    # would otherwise merge into `db`'s entry and be admitted by it.
+    modules = ("config", f"{google_health_mcp.__name__}.config")
+    package = Path(google_health_mcp.__file__).parent
+
+    holders = {}
+    for source in sorted(package.rglob("*.py")):
+        for node in ast.walk(ast.parse(source.read_text())):
+            if not isinstance(node, ast.ImportFrom) or node.module not in modules:
+                continue
+            bound = sorted(a.name for a in node.names if a.name in watched)
+            if bound:
+                holders.setdefault(source.relative_to(package).as_posix(), []).extend(bound)
+    holders = {name: sorted(set(names)) for name, names in holders.items()}
+
+    assert holders == expected, (
+        f"a module binds a config path at import that the harness does not patch: {holders}"
     )

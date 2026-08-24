@@ -39,14 +39,14 @@ Please install it before your first commit.
 
 CI runs this on Linux, macOS and Windows.
 
+Tests are fully offline - no real API calls, no real tokens. Autouse fixtures in `tests/conftest.py` enforce that rather than trusting each test to: your own credential files are replaced with an empty directory, and a test that reaches the network fails. Fixtures use fictional data and fixed past dates; never paste real health measurements into tests.
+
 ### Run lint and formatting checks
 
 ```bash
 .venv/bin/python -m ruff check src tests
 .venv/bin/python -m ruff format --check src tests
 ```
-
-Tests are fully offline - no real API calls, no real tokens. Fixtures use fictional data and fixed past dates; never paste real health measurements into tests.
 
 ## Making changes
 

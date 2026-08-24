@@ -1,8 +1,58 @@
 """Shared fixtures for the google-health-mcp test suite."""
 
+import urllib.request
+
 import pytest
 
-from google_health_mcp import db
+from google_health_mcp import config, db, helpers
+
+
+@pytest.fixture(autouse=True)
+def _no_real_credentials(tmp_path_factory, monkeypatch):
+    """No test sees the developer's own credentials.
+
+    Every query tool opens with `refresh_before_query`, which auto-syncs when
+    the cache holds no `sync_log` row for the type - and a temp database never
+    has one. Given a usable token that sync succeeded, writing the real
+    account into the test's database and into the windows it asserts over,
+    while on a machine with no credentials it failed and `auto_sync_if_stale`
+    swallowed it. The same suite meant two different things.
+
+    Pointing both credential files at an empty directory is what settles it:
+    the refresh is refused before a request is built, so every host takes the
+    branch CI takes. A test wanting credentials writes them here.
+
+    `helpers` is patched as well as `config`, and it is the binding that
+    matters most: `helpers` imports the two paths by value, so it keeps its
+    own copies and `require_auth` - worn by every tool - would go on reading
+    the real files. `auth` and `doctor` reach them through `config` at call
+    time and need nothing here.
+    """
+    empty = tmp_path_factory.mktemp("credentials")
+    for module in (config, helpers):
+        monkeypatch.setattr(module, "GOOGLE_TOKENS_PATH", empty / "google_tokens.json")
+        monkeypatch.setattr(module, "GOOGLE_CLIENT_PATH", empty / "google_client.json")
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """Refuse a real request, as a backstop to the fixture above.
+
+    `pytest.fail` rather than `assert`, and the difference is load-bearing:
+    `refresh_google_token` and `auto_sync_if_stale` both end in `except
+    Exception`, so an `AssertionError` raised here is caught by the code under
+    test and reported as an ordinary network failure - which is precisely the
+    silence this fixture exists to break. `Failed` derives from
+    `BaseException` and neither catch-all can absorb it.
+
+    A test that means to exercise a request patches `urlopen` itself, which
+    replaces this for the duration.
+    """
+
+    def refuse(*_args, **_kwargs):
+        pytest.fail("this test reached the network; patch urllib.request.urlopen to serve it")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
 
 
 @pytest.fixture(autouse=True)

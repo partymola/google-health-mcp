@@ -520,7 +520,9 @@ def test_reports_an_expired_access_token_without_calling_the_network(setup_paths
     _write_credentials(config_dir, expires_at=time.time() - 60)
 
     def fail_on_network(*_args, **_kwargs):
-        raise AssertionError("doctor made a network call")
+        # `pytest.fail` for the reason conftest's refusal uses it: an
+        # `AssertionError` is absorbed by an `except Exception` upstream.
+        pytest.fail("doctor made a network call")
 
     monkeypatch.setattr("urllib.request.urlopen", fail_on_network)
 

@@ -93,9 +93,10 @@ def test_sync_refuses_in_offline_mode(capsys, monkeypatch):
 def one_ok_finding(monkeypatch):
     """Stub the checks out, so these tests exercise the CLI wiring alone.
 
-    Left real they would read whatever `config.DB_PATH` resolves to and bind the
-    callback port - harmless under an isolated HOME and a developer's live cache
-    without one. Nothing here is about what the checks find.
+    Left real they would read whatever `config.DB_PATH` resolves to and bind
+    the callback port, neither of which the conftest fixtures cover - they
+    isolate the credentials and refuse a request. Nothing here is about what
+    the checks find.
     """
     from google_health_mcp import doctor
 
