@@ -5,6 +5,7 @@ than an error - a page loop that stops early, a filter naming the wrong field,
 a response read under the wrong key, a page size the server silently truncates.
 """
 
+import itertools
 import json
 import urllib.error
 from datetime import date
@@ -274,11 +275,27 @@ class TestFailures:
         assert points == []
 
     def test_the_walk_gives_up_on_wall_clock_not_only_on_page_count(self, monkeypatch):
-        """500 pages at the socket timeout is hours on the tool-call thread."""
-        monkeypatch.setattr(api, "GOOGLE_WALK_DEADLINE", 0)
-        with patch("urllib.request.urlopen", side_effect=lambda *a, **k: _page([], token="t")):
+        """500 pages at the socket timeout is hours on the tool-call thread.
+
+        The clock is driven rather than the budget zeroed. At zero the check
+        fires on the first pass, before a single request, so the walk never
+        starts and the test cannot tell giving up part-way from refusing
+        outright - it passed with the page mock never called at all.
+
+        The count is asserted exactly, which is what makes `>` surviving as
+        `>=` fail: the walk spends one tick on the deadline and one per pass,
+        so a budget of 2 buys two pages and the third pass is over. A range
+        rather than a number leaves that off-by-one - the likeliest edit this
+        line will ever see - invisible, and lets the count erode silently if
+        anything else starts consuming the clock.
+        """
+        ticks = itertools.count()
+        monkeypatch.setattr(api.time, "monotonic", lambda: next(ticks))
+        monkeypatch.setattr(api, "GOOGLE_WALK_DEADLINE", 2)
+        with patch("urllib.request.urlopen", side_effect=lambda *a, **k: _page([], token="t")) as m:
             with pytest.raises(api.HealthAPIError, match="gave up"):
                 api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
+        assert m.call_count == 2, "two pages fetched, then the third pass over budget"
 
     def test_a_rejected_token_is_not_answered_with_publishing_advice(self):
         with patch("urllib.request.urlopen", side_effect=_http_error(401)):
