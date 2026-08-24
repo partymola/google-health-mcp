@@ -87,6 +87,24 @@ class TestTheGoogleRefreshBoundary:
         with pytest.raises(auth.RefreshNetworkError):
             auth.refresh_google_token()
 
+    def test_the_message_carries_nothing_of_the_failure_it_absorbed(self, monkeypatch):
+        """The catch-all is handed an arbitrary exception, and this is where its
+        text would leak.
+
+        `run_sync` writes this message into `sync_log` and returns it to the
+        client, and an unanticipated exception's own text is an absolute path
+        often enough. Asserted here rather than at the client, where
+        `google_get` substitutes a fixed message either way and would mask it.
+        """
+        path = "/home/someone/certs/ca.pem"
+        monkeypatch.setattr(
+            auth, "_refresh_google_token", MagicMock(side_effect=RuntimeError(path))
+        )
+        with pytest.raises(auth.RefreshNetworkError) as caught:
+            auth.refresh_google_token()
+        assert str(caught.value) == "Could not obtain a token from Google."
+        assert "/home/someone" not in str(caught.value)
+
     def test_a_refusal_is_passed_through_unchanged(self, monkeypatch):
         monkeypatch.setattr(
             auth, "_refresh_google_token", MagicMock(side_effect=auth.TokenRefused("no"))

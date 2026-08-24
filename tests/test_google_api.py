@@ -386,6 +386,9 @@ class TestAgainstTheRealGoogleRefresh:
     def _isolate(self, tmp_path, monkeypatch):
         from google_health_mcp import auth
 
+        # Undo the module-wide stub: it is what every other class here wants,
+        # and it is the one thing this class must not have.
+        monkeypatch.setattr(api, "refresh_google_token", auth.refresh_google_token)
         monkeypatch.setattr(config, "OFFLINE_MODE", False)
         monkeypatch.setattr(auth, "_cached_google_tokens", None)
         monkeypatch.setattr(auth, "_cached_google_client", None)
@@ -404,17 +407,65 @@ class TestAgainstTheRealGoogleRefresh:
         )
         return api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
 
-    def test_a_missing_token_file_is_an_auth_failure(self):
-        with pytest.raises(api.HealthAuthError):
+    def test_the_classification_comes_from_the_token_layer(self):
+        """The exception alone does not distinguish this class from a stub.
+
+        A refresh that hands back any string reaches the API, and Google's own
+        401 raises the same `HealthAuthError` - so asserting the type leaves
+        every test here green with the token layer deleted. The cause is what
+        separates the two.
+        """
+        from google_health_mcp import auth
+
+        with pytest.raises(api.HealthAuthError) as caught:
             self._list_with_token_file(None)
+        assert isinstance(caught.value.__cause__, auth.TokenRefused)
 
     def test_a_token_file_that_is_not_json_is_an_auth_failure(self):
-        with pytest.raises(api.HealthAuthError):
+        """The cause is asserted so that this branch and the shape check stay
+        told apart: drop the `from e` here and both would chain nothing."""
+        with pytest.raises(api.HealthAuthError) as caught:
             self._list_with_token_file("{not json")
+        assert isinstance(caught.value.__cause__.__cause__, ValueError)
+
+    def test_a_token_file_that_is_not_an_object_is_an_auth_failure(self):
+        """Valid JSON of the wrong shape takes a different branch from bad JSON.
+
+        `"{not json"` fails to parse and is reported as unreadable; a file
+        holding a list parses fine and is caught only by the shape check.
+        Both raise the same type, so the branch is identified by the cause:
+        the parse failure chains the `JSONDecodeError` it caught, and the
+        shape check has nothing to chain.
+        """
+        with pytest.raises(api.HealthAuthError) as caught:
+            self._list_with_token_file("[]")
+        assert caught.value.__cause__.__cause__ is None
 
     def test_a_token_file_with_no_refresh_token_is_an_auth_failure(self):
         with pytest.raises(api.HealthAuthError):
             self._list_with_token_file('{"access_token": "a", "expires_at": 0}')
+
+    def test_an_unanticipated_refresh_failure_is_not_an_auth_failure(self, monkeypatch):
+        """The catch-all is what makes the two-type guarantee hold by construction.
+
+        A transport error arrives as `OSError` and is classified before it,
+        so nothing else here reaches it - and a failure that lands in neither
+        named branch is exactly what it exists to absorb. Were it to answer
+        with a refusal, doctor would rewrite the token file every host shares
+        over a fault that clears on its own.
+        """
+        from google_health_mcp import auth
+
+        monkeypatch.setattr(
+            auth, "_load_google_client", MagicMock(side_effect=RuntimeError("unanticipated"))
+        )
+        with pytest.raises(api.HealthAPIError) as caught:
+            self._list_with_token_file('{"access_token": "a", "refresh_token": "r"}')
+        assert not isinstance(caught.value, api.HealthAuthError)
+        # By equality: `run_sync` writes this message into `sync_log` and
+        # hands it to the client, so a substring check passes however much a
+        # future version interpolates alongside.
+        assert str(caught.value) == "Network error. Check your connection."
 
     def test_a_refresh_that_cannot_reach_google_is_not_an_auth_failure(self, monkeypatch):
         from google_health_mcp import auth
