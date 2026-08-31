@@ -6,6 +6,7 @@ from datetime import date, timedelta
 import anyio
 
 from .. import api, config, db
+from ..errors import LiveRefreshFailed
 from ..helpers import format_response, require_auth
 from ..mcp_instance import mcp
 from .google_sync import GOOGLE_SYNC_HANDLERS
@@ -204,8 +205,8 @@ def refresh_before_query(data_type: str, start: date, end: date, live: bool) -> 
         return
 
     if config.OFFLINE_MODE:
-        # The offline contract is a tagged message, not an exception reaching
-        # the client: require_auth catches this type and nothing else.
+        # The offline contract is a tagged message, not an error reaching the
+        # client: require_auth answers this type with one instead of converting.
         raise api.HealthOfflineError(
             "Offline mode (GOOGLE_HEALTH_MCP_OFFLINE): live refresh is unavailable; "
             "the cache is served as-is."
@@ -216,7 +217,7 @@ def refresh_before_query(data_type: str, start: date, end: date, live: bool) -> 
     if status != "ok":
         # The status word only. These paths carry API responses, and the
         # accompanying notes are not this function's to widen.
-        raise RuntimeError(f"live refresh of {data_type} failed: {status or 'no result'}")
+        raise LiveRefreshFailed(f"live refresh of {data_type} failed: {status or 'no result'}")
 
 
 @mcp.tool()

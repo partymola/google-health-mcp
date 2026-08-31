@@ -6,9 +6,12 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
+from mcp.server.mcpserver.exceptions import ToolError
+
 from . import config
 from .api import HealthOfflineError
 from .config import GOOGLE_CLIENT_PATH, GOOGLE_TOKENS_PATH
+from .errors import GoogleHealthError, InvalidDateError
 
 # --- Response formatting ---
 
@@ -72,7 +75,9 @@ def _parse_single_date(date_str: str | None, default: date, is_end: bool) -> dat
     if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
         return date.fromisoformat(date_str)
 
-    raise ValueError(f"Invalid date '{date_str}'. Use YYYY-MM-DD, YYYY-MM, or Nd (e.g. '30d').")
+    raise InvalidDateError(
+        f"Invalid date '{date_str}'. Use YYYY-MM-DD, YYYY-MM, or Nd (e.g. '30d')."
+    )
 
 
 # --- Formatting helpers ---
@@ -124,28 +129,38 @@ def require_auth(func):
     """Gate a tool on credentials, with offline/cache-only support.
 
     Normal mode: return a "not configured" error if the credential files are
-    missing, otherwise call the tool unchanged.
+    missing, otherwise call the tool.
 
     Offline mode (GOOGLE_HEALTH_MCP_OFFLINE): skip the credential check so cache reads
     work without a token; any attempted live API call raises HealthOfflineError,
     which becomes a clean message; successful responses are tagged offline_mode.
+
+    Also converts a GoogleHealthError into ToolError, which is the exception
+    whose message `mcp` keeps on the wire. Why only those: errors.py.
     """
 
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
-        if not config.OFFLINE_MODE:
-            if not GOOGLE_CLIENT_PATH.exists() or not GOOGLE_TOKENS_PATH.exists():
-                return json.dumps(
-                    {
-                        "error": "Not configured. Run: google-health-mcp auth",
-                    }
-                )
-            return await func(*args, **kwargs)
+        if not config.OFFLINE_MODE and not (
+            GOOGLE_CLIENT_PATH.exists() and GOOGLE_TOKENS_PATH.exists()
+        ):
+            return json.dumps(
+                {
+                    "error": "Not configured. Run: google-health-mcp auth",
+                }
+            )
 
         try:
             result = await func(*args, **kwargs)
         except HealthOfflineError as e:
-            return format_response({"error": str(e), "offline_mode": True})
-        return _annotate_offline(result)
+            # Offline mode answers with one clean message, so this clause stays
+            # above the GoogleHealthError one it descends from.
+            if config.OFFLINE_MODE:
+                return format_response({"error": str(e), "offline_mode": True})
+            raise ToolError(str(e)) from e
+        except GoogleHealthError as e:
+            raise ToolError(str(e)) from e
+
+        return _annotate_offline(result) if config.OFFLINE_MODE else result
 
     return wrapper

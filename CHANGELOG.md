@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased - 1.1.2
+
+### Changed
+
+- `mcp` 2.1.1, up from 2.0.0. That release keeps a `ToolError`'s text and replaces every other exception's with `Error executing tool <name>`, which on its own would have left a query tool answering a date it cannot parse, or an expired token, with nothing but that line. The errors this package raises as its own types now travel as `ToolError`, so a caller still gets the text that says what to do: which date formats parse, that the token needs re-authorising, that the grant is missing a scope. Anything unplanned keeps the new behaviour and stays in the server's log, which is where the absolute path in a socket failure belongs.
+
 ## 1.1.1 - 2026-08-21
 
 ### Fixed

@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import config
+from .errors import GoogleHealthError
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class _CallbackServer(HTTPServer):
         super().server_bind()
 
 
-class TokenRefused(RuntimeError):
+class TokenRefused(GoogleHealthError, RuntimeError):
     """The server judged the credentials and rejected them.
 
     The only failure that warrants telling the user to re-authorise, which
@@ -66,13 +67,13 @@ class TokenRefused(RuntimeError):
     """
 
 
-class RefreshNetworkError(RuntimeError):
+class RefreshNetworkError(GoogleHealthError, RuntimeError):
     """The refresh request never got an answer.
 
-    Subclasses RuntimeError so existing callers are unaffected, but is
-    distinguishable: an unreachable server says nothing about whether the
-    credentials are still good, and telling the user to re-authorise would
-    rotate a token file another host may own.
+    Keeps RuntimeError so existing callers and `_classify_google_refusal`'s
+    return type are unaffected, but is distinguishable: an unreachable server
+    says nothing about whether the credentials are still good, and telling the
+    user to re-authorise would rotate a token file another host may own.
     """
 
 

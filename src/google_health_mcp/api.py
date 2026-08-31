@@ -24,22 +24,24 @@ from urllib.parse import urlencode
 
 from . import config
 from .auth import RefreshNetworkError, TokenRefused, refresh_google_token
+from .errors import GoogleHealthError
 
 logger = logging.getLogger(__name__)
 
 
-class HealthAuthError(Exception):
+class HealthAuthError(GoogleHealthError):
     """Token expired or invalid, re-auth needed."""
 
 
-class HealthOfflineError(Exception):
+class HealthOfflineError(GoogleHealthError):
     """A live API call was attempted while offline/cache-only mode is on.
 
-    Deliberately subclasses Exception directly and NOT HealthAPIError /
-    HealthAuthError / HealthRateLimitError: run_sync() catches those per data
-    type, which would swallow this and write spurious error rows to the cache.
-    It is meant to propagate up to require_auth (and the CLI sync handler),
-    which translate it into a single clean "offline mode" message.
+    Deliberately a sibling of HealthAPIError / HealthAuthError /
+    HealthRateLimitError rather than one of them: run_sync() catches those per
+    data type, which would swallow this and write spurious error rows to the
+    cache. It is meant to propagate up to require_auth (and the CLI sync
+    handler), which translate it into a single clean "offline mode" message.
+    The shared GoogleHealthError base is not one of those catches.
     """
 
 
@@ -49,7 +51,7 @@ class HealthOfflineError(Exception):
 MAX_RATE_LIMIT_WAIT = 900
 
 
-class HealthRateLimitError(Exception):
+class HealthRateLimitError(GoogleHealthError):
     """Rate limited (429). Retry after reset seconds."""
 
     def __init__(self, reset_seconds: int = MAX_RATE_LIMIT_WAIT):
@@ -81,7 +83,7 @@ def _reset_seconds(error) -> int:
     return min(seconds, MAX_RATE_LIMIT_WAIT)
 
 
-class HealthAPIError(Exception):
+class HealthAPIError(GoogleHealthError):
     """General API error."""
 
 
@@ -310,7 +312,7 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
     return body
 
 
-class GoogleGatewayTimeout(Exception):
+class GoogleGatewayTimeout(GoogleHealthError):
     """A 504, which Google's own guidance says to retry with a smaller page.
 
     Internal to the paging loop: callers see whatever the retry ends up

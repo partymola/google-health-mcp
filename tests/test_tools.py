@@ -3,6 +3,10 @@
 import json
 from unittest.mock import patch
 
+import pytest
+from mcp.server.mcpserver.exceptions import ToolError
+
+from google_health_mcp.api import HealthAPIError, HealthOfflineError
 from google_health_mcp.helpers import require_auth
 
 
@@ -589,3 +593,148 @@ class TestOfflineMode:
         assert parsed["offline_mode"] is True
         assert "live=True" not in parsed.get("hint", "")
         assert "host that owns the cache" in parsed.get("hint", "")
+
+
+class TestWhichErrorsAreExplainedToTheModel:
+    """`mcp` 2.1 keeps a `ToolError`'s text and replaces every other
+    exception's with "Error executing tool <name>".
+
+    So an error a caller could act on has to be converted, and an unplanned one
+    has to be left alone.
+    """
+
+    @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
+    @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
+    async def test_a_deliberate_error_keeps_its_message(self, mock_tokens_path, mock_config_path):
+        mock_config_path.exists.return_value = True
+        mock_tokens_path.exists.return_value = True
+
+        @require_auth
+        async def tool_fn():
+            raise HealthAPIError("API error 503 for /sessions")
+
+        with pytest.raises(ToolError) as excinfo:
+            await tool_fn()
+        assert "API error 503 for /sessions" in str(excinfo.value)
+
+    @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
+    @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
+    async def test_an_unplanned_error_is_left_to_be_masked(
+        self, mock_tokens_path, mock_config_path
+    ):
+        # The text of an unplanned failure is what this package spends the rest
+        # of its leak tests keeping off the wire, since a socket error names a
+        # path. Converting everything would put it back.
+        mock_config_path.exists.return_value = True
+        mock_tokens_path.exists.return_value = True
+
+        @require_auth
+        async def tool_fn():
+            raise OSError("/home/someone/.config/google-health-mcp/google_tokens.json")
+
+        with pytest.raises(OSError):
+            await tool_fn()
+
+    async def test_a_deliberate_error_keeps_its_message_offline_too(self, monkeypatch):
+        monkeypatch.setattr("google_health_mcp.config.OFFLINE_MODE", True)
+
+        @require_auth
+        async def tool_fn():
+            raise HealthAPIError("API error 503 for /sessions")
+
+        with pytest.raises(ToolError) as excinfo:
+            await tool_fn()
+        assert "API error 503 for /sessions" in str(excinfo.value)
+
+    @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
+    @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
+    async def test_an_offline_error_raised_while_online_is_converted(
+        self, mock_tokens_path, mock_config_path, monkeypatch
+    ):
+        # Defensive rather than a live path: both raise sites are guarded by
+        # the same OFFLINE_MODE the decorator reads, so a real process cannot
+        # get here. Pinned anyway, because the clause sits above the
+        # GoogleHealthError one and nothing else distinguishes this line from
+        # its own deletion.
+        mock_config_path.exists.return_value = True
+        mock_tokens_path.exists.return_value = True
+        monkeypatch.setattr("google_health_mcp.config.OFFLINE_MODE", False)
+
+        @require_auth
+        async def tool_fn():
+            raise HealthOfflineError("live API calls are disabled")
+
+        with pytest.raises(ToolError) as excinfo:
+            await tool_fn()
+        assert "live API calls are disabled" in str(excinfo.value)
+
+    @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
+    @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
+    async def test_a_normal_mode_response_is_not_tagged_offline(
+        self, mock_tokens_path, mock_config_path, monkeypatch
+    ):
+        # Annotating unconditionally is a one-token change that tells the model
+        # a host which can sync must wait for one that does, and it leaves the
+        # whole suite green. The assertion is the key's absence: a host that is
+        # not offline must say nothing about offline mode either way.
+        mock_config_path.exists.return_value = True
+        mock_tokens_path.exists.return_value = True
+        monkeypatch.setattr("google_health_mcp.config.OFFLINE_MODE", False)
+
+        @require_auth
+        async def tool_fn():
+            return json.dumps({"ok": True, "hint": "Try live=True to re-fetch this window."})
+
+        parsed = json.loads(await tool_fn())
+        assert "offline_mode" not in parsed
+        assert parsed["hint"] == "Try live=True to re-fetch this window."
+
+    @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
+    @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
+    async def test_a_live_refresh_failure_keeps_its_status(
+        self, mock_tokens_path, mock_config_path, monkeypatch, tmp_path
+    ):
+        # Every query tool reaches this on live=True, and the status word is the
+        # whole of what the model can act on: `auth_error` says re-authorise,
+        # where `rate_limited` says wait. Raised as a bare RuntimeError it was
+        # masked, which is the one case a class-walking check cannot see.
+        mock_config_path.exists.return_value = True
+        mock_tokens_path.exists.return_value = True
+        monkeypatch.setattr("google_health_mcp.config.OFFLINE_MODE", False)
+
+        from google_health_mcp import db as db_mod
+        from google_health_mcp.tools import sync_tools
+
+        monkeypatch.setattr(
+            sync_tools, "run_sync", lambda *a, **k: {"heart_rate": {"status": "auth_error"}}
+        )
+
+        with patch.object(db_mod, "DB_PATH", tmp_path / "test.db"):
+            from google_health_mcp.tools.heart_tools import health_get_heart_rate
+
+            with pytest.raises(ToolError) as excinfo:
+                await health_get_heart_rate(
+                    start_date="2026-03-10", end_date="2026-03-15", live=True
+                )
+
+        assert "auth_error" in str(excinfo.value)
+
+    @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
+    @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
+    async def test_a_bad_date_still_names_the_formats(
+        self, mock_tokens_path, mock_config_path, tmp_path
+    ):
+        # Through a real tool rather than a stand-in: parse_date runs inside the
+        # tool body, so nothing converts it unless the decorator does.
+        mock_config_path.exists.return_value = True
+        mock_tokens_path.exists.return_value = True
+
+        from google_health_mcp import db as db_mod
+
+        with patch.object(db_mod, "DB_PATH", tmp_path / "test.db"):
+            from google_health_mcp.tools.heart_tools import health_get_heart_rate
+
+            with pytest.raises(ToolError) as excinfo:
+                await health_get_heart_rate(start_date="not-a-date")
+
+        assert "YYYY-MM-DD" in str(excinfo.value)

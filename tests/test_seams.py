@@ -7,7 +7,9 @@ someone went looking. See AGENTS.md, "Seams the suite does not cross".
 """
 
 import ast
+import importlib
 import json
+import pkgutil
 import re
 import sqlite3
 import subprocess
@@ -21,6 +23,7 @@ import pytest
 
 import google_health_mcp
 from google_health_mcp import api, config, db, doctor, helpers
+from google_health_mcp.errors import GoogleHealthError
 
 _PATH_NAMES = {
     "CONFIG_DIR",
@@ -612,6 +615,78 @@ def test_the_suite_cannot_see_real_credentials():
     assert helpers.GOOGLE_TOKENS_PATH.parent != config.CONFIG_DIR
     assert not helpers.GOOGLE_TOKENS_PATH.exists()
     assert not helpers.GOOGLE_CLIENT_PATH.exists()
+
+
+#: Exceptions deliberately left for `mcp` to mask, named so that leaving the
+#: base off stays a decision rather than an omission. Fully qualified, or an
+#: entry would exempt that bare name in every module at once. Empty today:
+#: every exception class this package defines is written for the model to read.
+_NOT_MODEL_FACING: frozenset[str] = frozenset()
+
+
+def _exception_classes_defined_here():
+    """Every exception class this package defines, keyed by module and name.
+
+    Keyed fully qualified because `walk_packages` yields alphabetically and a
+    bare name lets a later module's conforming class overwrite an earlier
+    module's broken one, which hides it completely.
+
+    `onerror` matters as much as the walk: with the default, an `ImportError`
+    raised while recursing into a subpackage is swallowed, `tools.*` drops out
+    of the result, and what is left still satisfies every assertion below.
+    """
+    package = Path(google_health_mcp.__file__).parent
+    modules = [google_health_mcp]
+    for info in pkgutil.walk_packages(
+        [str(package)],
+        f"{google_health_mcp.__name__}.",
+        onerror=lambda name: pytest.fail(f"{name} could not be imported, so it went unchecked"),
+    ):
+        modules.append(importlib.import_module(info.name))
+
+    # `walk_packages` yields what is inside the directory and never the package
+    # itself, so `__init__.py` is seeded by hand above rather than walked.
+    found = {}
+    for module in modules:
+        for name, obj in vars(module).items():
+            # Defined here, not imported into here: every module that raises
+            # one of these also imports it, and counting those would report
+            # the same class once per importer.
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, Exception)
+                and obj.__module__ == module.__name__
+            ):
+                found[f"{module.__name__}.{name}"] = obj
+    return found
+
+
+def test_every_exception_this_package_defines_reaches_the_model():
+    """Which exceptions keep their message on the wire is not observable here.
+
+    `require_auth` turns a `GoogleHealthError` into the `ToolError` whose text
+    `mcp` 2.1 keeps; everything else arrives as a bare "Error executing tool
+    <name>". A new exception class that forgets the base raises fine, is caught
+    fine, and every behavioural test on it passes, because the conversion
+    happens a layer above the one those tests call. What it loses is the half a
+    model needs to correct its own call.
+
+    Asks the class hierarchy rather than reading the `class` statement, so a
+    base introduced through an alias or a subclass still counts. It sees
+    classes this package *defines*: a bare `RuntimeError` or `ValueError`
+    raised anywhere here is masked and nothing reports it.
+    """
+    found = _exception_classes_defined_here()
+    assert found, "no exception class found: the package layout has moved"
+    stragglers = sorted(
+        name
+        for name, obj in found.items()
+        if name not in _NOT_MODEL_FACING and not issubclass(obj, GoogleHealthError)
+    )
+    assert not stragglers, (
+        f"raised with a message the model will never see: {stragglers}. Subclass "
+        "GoogleHealthError, or name it in _NOT_MODEL_FACING and say why"
+    )
 
 
 def test_only_the_expected_modules_hold_a_config_path():
