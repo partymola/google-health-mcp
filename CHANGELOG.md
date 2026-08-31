@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased - 1.1.2
 
+### Fixed
+
+- `health_trends` no longer abandons its database connection when it is given a date it cannot parse. It opened the cache before validating the argument and closed it only on the way out, so a rejected call left the handle for the cyclic garbage collector to reclaim instead of closing it at the point of failure.
+
 ### Changed
 
 - `mcp` 2.1.1, up from 2.0.0. That release keeps a `ToolError`'s text and replaces every other exception's with `Error executing tool <name>`, which on its own would have left a query tool answering a date it cannot parse, or an expired token, with nothing but that line. The errors this package raises as its own types now travel as `ToolError`, so a caller still gets the text that says what to do: which date formats parse, that the token needs re-authorising, that the grant is missing a scope. Anything unplanned keeps the new behaviour and stays in the server's log, which is where the absolute path in a socket failure belongs.

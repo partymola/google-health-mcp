@@ -673,21 +673,19 @@ async def health_trends(
     def _analyse():
         auto_sync_if_stale(data_type)
         conn = db.get_db()
+        try:
+            if compare:
+                return _compare_periods(conn, data_type, compare)
 
-        if compare:
-            result = _compare_periods(conn, data_type, compare)
-        else:
             start, end = parse_date(start_date, end_date, default_days=365)
             s, e = start.isoformat(), end.isoformat()
 
             fn = _TREND_FNS.get(data_type)
             if fn:
-                result = fn(conn, s, e, period)
-            else:
-                result = {"error": f"Unknown data_type '{data_type}'. Use: {_VALID_TYPES}."}
-
-        conn.close()
-        return result
+                return fn(conn, s, e, period)
+            return {"error": f"Unknown data_type '{data_type}'. Use: {_VALID_TYPES}."}
+        finally:
+            conn.close()
 
     result = await anyio.to_thread.run_sync(_analyse)
     return format_response(result)

@@ -546,3 +546,67 @@ class TestComparePeriods:
         assert result["period_1"]["count"] == 4
         assert result["period_1"]["max_temp_celsius"] == 38.4
         assert result["period_2"]["count"] == 0
+
+
+class TestTheTrendConnectionIsAlwaysClosed:
+    """`health_trends` opens the cache before it validates its arguments.
+
+    Every other tool closes in the function that opened, with nothing between;
+    this one holds the connection across `parse_date` and the trend call, so
+    anything raising in between abandons it. The traceback keeps the frame
+    alive and the frame keeps the connection, so it is a reference cycle:
+    reclaimed by the cyclic collector eventually rather than closed at the
+    point of failure. Measured, the descriptor count does not climb.
+
+    Observed by recording `close()`, not by using the connection afterwards.
+    Those two are indistinguishable from the test's thread: a connection
+    opened on the worker thread `anyio` runs the query on refuses use with the
+    same `ProgrammingError` a closed one raises, so that assertion passes
+    whether or not the fix is present.
+
+    It also fails for `with db.get_db() as conn:`, which is the tidier-looking
+    reinstatement of the bug: `sqlite3.Connection`'s context manager commits or
+    rolls back a transaction and never closes.
+    """
+
+    async def test_a_bad_date_does_not_abandon_the_connection(self, monkeypatch, tmp_path):
+        import sqlite3
+        from unittest.mock import patch
+
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        from google_health_mcp import db as db_mod
+        from google_health_mcp.tools import analysis_tools
+
+        closed = []
+
+        class _Recording(sqlite3.Connection):
+            def close(self):
+                closed.append(self)
+                super().close()
+
+        opened = []
+
+        def _tracking(*args, **kwargs):
+            # check_same_thread only keeps teardown quiet; the assertion below
+            # compares two lists by identity and reaches no database state.
+            conn = sqlite3.connect(
+                tmp_path / "trends.db", factory=_Recording, check_same_thread=False
+            )
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr(db_mod, "get_db", _tracking)
+        monkeypatch.setattr(analysis_tools, "auto_sync_if_stale", lambda *a, **k: None)
+
+        with (
+            patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH") as client_path,
+            patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH") as tokens_path,
+        ):
+            client_path.exists.return_value = True
+            tokens_path.exists.return_value = True
+            with pytest.raises(ToolError):
+                await analysis_tools.health_trends(data_type="activity", start_date="not-a-date")
+
+        assert opened, "no connection was opened, so this test proves nothing"
+        assert closed == opened, f"{len(opened) - len(closed)} connection(s) abandoned"
