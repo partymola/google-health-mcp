@@ -623,8 +623,9 @@ class TestWhichErrorsAreExplainedToTheModel:
         self, mock_tokens_path, mock_config_path
     ):
         # The text of an unplanned failure is what this package spends the rest
-        # of its leak tests keeping off the wire, since a socket error names a
-        # path. Converting everything would put it back.
+        # of its leak tests keeping off the wire. This is the measured case: a
+        # failure to read the token file or the cache names an absolute path.
+        # Converting everything would put it back.
         mock_config_path.exists.return_value = True
         mock_tokens_path.exists.return_value = True
 
