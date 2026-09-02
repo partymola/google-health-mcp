@@ -2,12 +2,13 @@
 
 `health_trends(period="not-a-period")` returned a correct year of *monthly*
 figures and echoed `"aggregation": "not-a-period"`. Nothing was empty, nothing
-raised, and nothing about the reply looked wrong - the model was handed real
+raised, and nothing about the reply looked wrong: the model was handed real
 data under a label that misdescribes it, which is worse than an error.
 
-These drive the registered tool through `mcp.call_tool`, the only layer that
-applies the argument schema. Calling the Python function directly skips it, so
-a test written that way passes whether the constraint is there or not.
+The tool calls here go through `mcp.call_tool`, the only layer that applies
+the argument schema. Calling the Python function directly skips it, so a test
+written that way passes whether the constraint is there or not. The rest read
+the docstring, the registry, the signature or the dispatches.
 """
 
 import asyncio
@@ -74,14 +75,21 @@ def call(name, args):
     return None, "".join(c.text for c in result.content if getattr(c, "text", None))
 
 
+def names_the_argument(said: str | None, argument: str, value) -> bool:
+    """Whether a message is about this argument, rather than any reply at all.
+
+    The empty string is excluded from the value half deliberately: it is a
+    substring of every message, so admitting it would count any reply,
+    including a crash whose text `mcp` has masked to the tool's name.
+    """
+    return bool(said) and (argument in said or bool(value) and str(value) in said)
+
+
 def refusal(args, argument, value):
     """The refusal of *this* argument, or None if the tool answered regardless.
 
     A message counts only when it names the argument or the value, so that a
-    failure with some other cause is not read as the refusal under test. The
-    empty string is excluded from the value half deliberately: it is a
-    substring of every message, so admitting it would count any reply at all,
-    including a masked crash.
+    failure with some other cause is not read as the refusal under test.
     """
     raised, text = call("health_trends", args)
     said = raised
@@ -91,32 +99,40 @@ def refusal(args, argument, value):
         except (TypeError, ValueError):
             return None
         said = parsed.get("error") if isinstance(parsed, dict) else None
-    if not said:
-        return None
-    return said if (argument in said or (value and str(value) in said)) else None
+    return said if names_the_argument(said, argument, value) else None
 
 
-def documented_values(argument: str) -> set[str]:
-    """The values `health_trends`'s docstring offers for one argument.
+def documented_chunk(argument: str, doc: str | None = None) -> str:
+    """The docstring text describing one argument.
+
+    Runs from the argument's own line to the next argument at the same
+    indent; a continuation line is indented further, so it stays inside.
+    """
+    doc = health_trends.__doc__ if doc is None else doc
+    opening = re.search(rf"^(?P<indent> *){argument}:", doc, re.MULTILINE)
+    assert opening, f"the docstring documents no {argument!r} argument"
+    rest = doc[opening.end() :]
+    end = re.search(rf"^{opening['indent']}\w+:", rest, re.MULTILINE)
+    return rest[: end.start()] if end else rest
+
+
+def documented_default(argument: str, doc: str | None = None) -> str | None:
+    """The value the docstring quotes as this argument's default, if it says."""
+    marked = re.search(r'Default:\s*"([^"]+)"', documented_chunk(argument, doc))
+    return marked.group(1) if marked else None
+
+
+def documented_values(argument: str, doc: str | None = None) -> set[str]:
+    """The values the docstring offers for one argument.
 
     The schema enum and the "Options:" list are the same fact written twice,
     and a doc restating a list the code holds is this repo's most repeated
-    defect.
-
-    Read from the argument's own line to the next argument at the same
-    indent, then narrowed to what sits between `Options:` and `Default:`. The
-    narrowing is load-bearing: with the default quoted in the same chunk, a
-    value dropped from `Options:` while remaining the default is still found
-    and the check passes over it.
+    defect. Narrowed to what sits between `Options:` and `Default:`, which is
+    load-bearing: with the default quoted in the same chunk, a value dropped
+    from `Options:` while remaining the default is still found and the check
+    passes over it.
     """
-    doc = health_trends.__doc__
-    opening = re.search(rf"^(?P<indent> *){argument}:", doc, re.MULTILINE)
-    assert opening, f"health_trends' docstring documents no {argument!r} argument"
-    rest = doc[opening.end() :]
-    # A continuation line is indented further, so it stays inside the chunk.
-    end = re.search(rf"^{opening['indent']}\w+:", rest, re.MULTILINE)
-    chunk = rest[: end.start()] if end else rest
-    options = chunk.split("Options:", 1)
+    options = documented_chunk(argument, doc).split("Options:", 1)
     assert len(options) == 2, f"{argument} documents no Options: list"
     return set(re.findall(r'"([^"]+)"', options[1].split("Default:", 1)[0]))
 
@@ -207,15 +223,35 @@ class TestTheDocstringOffersWhatTheSchemaAccepts(unittest.TestCase):
         self.assertNotIn("weekly", documented_values("data_type"))
 
 
-class TestTheKeyShapeOracleDiscriminates(unittest.TestCase):
-    """The shapes are hand-written, so they need a pin of their own.
+class TestTheChecksHereHoldTheirOwnGround(unittest.TestCase):
+    """Every guard in this file needs a pin, or it reverts in one line.
 
-    Loosened to anything, they still pass over every period and the check
-    they exist for goes quiet. Mutual exclusivity is the property: a key of
-    one period's shape must not satisfy any other's.
+    Each is a single edit away from passing over the defect it was added for
+    while the suite stays green.
     """
 
+    def test_a_documented_value_is_not_found_in_the_default_alone(self):
+        """The `Options:` to `Default:` narrowing, which a tidy-up removes in one line."""
+        doc = (
+            '        period: Aggregation period. Options: "weekly",\n'
+            '            "quarterly". Default: "monthly".\n'
+            "        after: something else.\n"
+        )
+        self.assertEqual(documented_values("period", doc), {"weekly", "quarterly"})
+
+    def test_an_empty_value_does_not_count_as_naming_itself(self):
+        """`"" in said` is true of every message, so it would accept any reply."""
+        self.assertFalse(names_the_argument("Error executing tool health_trends", "period", ""))
+        self.assertFalse(names_the_argument(None, "period", "daily"))
+        self.assertTrue(names_the_argument("Input should be 'weekly'", "period", "weekly"))
+        self.assertTrue(names_the_argument("period is wrong", "period", "zz"))
+
     def test_the_key_shapes_tell_the_periods_apart(self):
+        """Loosened to anything, the shapes pass over every period and go quiet.
+
+        Mutual exclusivity is the property: a key of one period's shape must
+        not satisfy any other's.
+        """
         self.assertEqual(set(PERIOD_KEY_SHAPE), set(get_args(TrendPeriod)))
         for period in get_args(TrendPeriod):
             key = _get_period_key("2026-03-15", period)
@@ -231,8 +267,8 @@ class TestEveryAcceptedPeriodBucketsDifferently(unittest.TestCase):
 
     `_get_period_key` ends in an unlabelled `else` that returns the month, so
     a value added to `TrendPeriod` and nowhere else is aggregated monthly and
-    reported under its own name - which is the defect this change removes,
-    reintroduced one line along.
+    reported under its own name, which is the whole defect this file is
+    about, one line along.
     """
 
     def test_each_period_produces_a_key_of_its_own(self):
@@ -299,14 +335,20 @@ class TestValidArgumentsAreUnaffected(unittest.TestCase):
         back to, so `period: TrendPeriod = "daily"` refuses every bad value a
         caller can send and then aggregates monthly under the label "daily"
         for everyone who omits the argument. Measured: the whole suite stayed
-        green on it until this assertion existed.
+        green on it until this assertion existed. The docstring quotes the
+        same value a second time, and moving one without the other makes it a
+        false claim with nothing to notice.
         """
         signature = inspect.signature(health_trends)
         for argument, alias in (("data_type", TrendType), ("period", TrendPeriod)):
             with self.subTest(argument=argument):
                 accepted = get_args(alias)
                 self.assertTrue(accepted, f"{argument} has no enumerated values")
-                self.assertIn(signature.parameters[argument].default, accepted)
+                default = signature.parameters[argument].default
+                self.assertIn(default, accepted)
+                documented = documented_default(argument)
+                if documented is not None:
+                    self.assertEqual(documented, default)
         raised, text = call("health_trends", {})
         self.assertIsNone(raised, raised)
         self.assertNotIn("error", json.loads(text))
