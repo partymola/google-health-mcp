@@ -190,24 +190,6 @@ class TestToolQueryFunctions:
 
     @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
     @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
-    async def test_trends_invalid_type(self, mock_tokens_path, mock_config_path, tmp_path):
-        mock_config_path.exists.return_value = True
-        mock_tokens_path.exists.return_value = True
-
-        from google_health_mcp import db as db_mod
-
-        db_path = tmp_path / "test.db"
-
-        with patch.object(db_mod, "DB_PATH", db_path):
-            from google_health_mcp.tools.analysis_tools import health_trends
-
-            result = await health_trends(data_type="nonexistent")
-
-        parsed = json.loads(result)
-        assert "error" in parsed
-
-    @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
-    @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
     async def test_exercises_empty_cache(self, mock_tokens_path, mock_config_path, tmp_path):
         mock_config_path.exists.return_value = True
         mock_tokens_path.exists.return_value = True

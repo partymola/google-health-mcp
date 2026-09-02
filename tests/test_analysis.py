@@ -1,5 +1,7 @@
 """Tests for the trend analysis logic."""
 
+import inspect
+import re
 from datetime import date
 
 import pytest
@@ -485,17 +487,27 @@ class TestComparePeriods:
         result = _compare_periods(populated_db, "activity", "just one period")
         assert "error" in result
 
-    def test_invalid_data_type(self, populated_db):
-        result = _compare_periods(populated_db, "invalid_type", "2026-03 vs 2026-02")
-        assert "error" in result
-
     def test_the_two_dispatches_offer_the_same_types(self):
-        """One message offers both, so a type missing from either is refused as it is
-        recommended - and a dropped entry is otherwise silent."""
+        """The schema is unpacked from one of them and `compare=` is served by the other.
+
+        So an entry dropped from either leaves a type the tool still offers
+        and one of its two paths cannot answer, as a bare KeyError that
+        reaches the caller as the tool's name and nothing else.
+        """
         assert set(_COMPARE_QUERY_FNS) == set(_TREND_FNS)
         # And each key reaches its own table: a mis-wired entry summarises the
         # wrong one silently, which equal key sets say nothing about.
         assert all(fn.__name__ == f"query_{name}" for name, fn in _COMPARE_QUERY_FNS.items())
+
+    def test_every_type_the_dispatches_offer_has_a_compare_summary(self):
+        """`summarize` is a third list of the same types, and it fails quietly.
+
+        A type present in both dispatches and absent from it falls through to
+        a bare count, which reads as a period holding no measurements rather
+        than as a branch nobody wrote. Nothing else reads these branches.
+        """
+        offered = set(re.findall(r'dtype == "([^"]+)"', inspect.getsource(_compare_periods)))
+        assert offered == set(_TREND_FNS)
 
     def test_a_day_of_nothing_is_still_a_day(self, tmp_db):
         """A rest day is 0 steps, and dropping it while counting the row inflates the average."""
@@ -507,17 +519,10 @@ class TestComparePeriods:
         assert result["period_1"]["count"] == 3
         assert result["period_1"]["avg_steps"] == 4000.0
 
-    def test_the_remedy_offers_only_types_that_can_be_analysed(self, populated_db):
-        """Not every cached type has a daily series: an ECG reading is an episode.
-
-        The list came from the cache's own types, so it named two the
-        dispatch refuses - and the message is the whole of what the caller
-        has to go on.
-        """
-        offered = _compare_periods(populated_db, "ecg", "2026-03 vs 2026-02")["error"]
-        offered = offered.split("Use: ")[1]
-        for name in offered.rstrip(".").split(", "):
-            assert name in _TREND_FNS, f"{name} is offered and cannot be analysed"
+    def test_a_type_with_no_daily_series_is_not_offered(self):
+        """Not every cached type has one: an ECG reading is an episode."""
+        for episode in ("ecg", "irn"):
+            assert episode not in _TREND_FNS
 
     def test_compare_heart_rate(self, populated_db):
         result = _compare_periods(populated_db, "heart_rate", "2026-03 vs 2026-02")

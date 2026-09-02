@@ -3,6 +3,7 @@
 import re
 from collections import defaultdict
 from datetime import date, timedelta
+from typing import Literal
 
 import anyio
 
@@ -453,9 +454,11 @@ def _trend_food_log(conn, start_date: str, end_date: str, period: str) -> dict:
     return {"periods": periods, "data_type": "food_log", "aggregation": period}
 
 
-#: What a trend can be asked for. Not every cached type has a daily series to
-#: aggregate - ECG readings and rhythm alerts are episodes - and a message
-#: built from the cache's own list offers types the dispatch below refuses.
+#: What a trend can be asked for, and what the tool's schema offers. Not every
+#: cached type has a daily series to aggregate - ECG readings and rhythm
+#: alerts are episodes - so this is not derived from the cache's own list.
+#: `TrendType` below is unpacked from it, so an entry added here is a type the
+#: tool offers and has to be able to answer.
 _TREND_FNS = {
     "heart_rate": _trend_heart_rate,
     "activity": _trend_activity,
@@ -472,8 +475,8 @@ _TREND_FNS = {
     "food_log": _trend_food_log,
 }
 #: Compare mode's own dispatch. It must hold exactly the same types as
-#: _TREND_FNS, since one message offers both: dropping an entry here refuses a
-#: type in the same sentence that recommends it.
+#: _TREND_FNS, since the schema is unpacked from that one: an entry missing
+#: here is a type the tool offers and `compare=` cannot answer.
 _COMPARE_QUERY_FNS = {
     "heart_rate": db.query_heart_rate,
     "activity": db.query_activity,
@@ -489,7 +492,10 @@ _COMPARE_QUERY_FNS = {
     "cardio_fitness": db.query_cardio_fitness,
     "food_log": db.query_food_log,
 }
-_VALID_TYPES = ", ".join(_TREND_FNS)
+# Unpacked from the dispatch rather than written out, so the schema offers
+# exactly the types there is a trend function for.
+TrendType = Literal[*_TREND_FNS]
+TrendPeriod = Literal["weekly", "monthly", "quarterly"]
 
 
 def _parse_compare_range(part: str) -> tuple[date, date] | None:
@@ -525,7 +531,7 @@ def _parse_compare_range(part: str) -> tuple[date, date] | None:
     return None
 
 
-def _compare_periods(conn, data_type: str, compare_str: str) -> dict:
+def _compare_periods(conn, data_type: TrendType, compare_str: str) -> dict:
     parts = re.split(r"\s+vs\s+", compare_str.strip(), maxsplit=1)
     if len(parts) != 2:
         return {
@@ -546,9 +552,7 @@ def _compare_periods(conn, data_type: str, compare_str: str) -> dict:
             }
         ranges.append(r)
 
-    query_fn = _COMPARE_QUERY_FNS.get(data_type)
-    if not query_fn:
-        return {"error": f"Cannot compare data_type '{data_type}'. Use: {_VALID_TYPES}."}
+    query_fn = _COMPARE_QUERY_FNS[data_type]
 
     def summarize(rows, dtype):
         if not rows:
@@ -622,8 +626,8 @@ def _compare_periods(conn, data_type: str, compare_str: str) -> dict:
 @mcp.tool()
 @require_auth
 async def health_trends(
-    data_type: str = "activity",
-    period: str = "monthly",
+    data_type: TrendType = "activity",
+    period: TrendPeriod = "monthly",
     start_date: str | None = None,
     end_date: str | None = None,
     compare: str | None = None,
@@ -680,10 +684,7 @@ async def health_trends(
             start, end = parse_date(start_date, end_date, default_days=365)
             s, e = start.isoformat(), end.isoformat()
 
-            fn = _TREND_FNS.get(data_type)
-            if fn:
-                return fn(conn, s, e, period)
-            return {"error": f"Unknown data_type '{data_type}'. Use: {_VALID_TYPES}."}
+            return _TREND_FNS[data_type](conn, s, e, period)
         finally:
             conn.close()
 
