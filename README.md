@@ -192,6 +192,8 @@ All query tools except `health_get_devices` and `health_get_lifetime_stats`, whi
 - `days` - days of history for a first sync (default: 30). Later syncs are incremental.
 - `since` / `until` - fetch an exact window regardless of what is cached.
 
+**A sync adds and corrects, and never removes.** An entry deleted in the app it was logged in simply stops appearing in the API, with nothing to say it was deleted, so a re-sync of that window leaves the cached row as it was. The API offers no tombstone, no change feed and no modified-since filter, so there is nothing to detect it by. In practice this reaches only the types you fill in by hand, since a device series is not deleted after the fact. Re-creating the cache is the way to clear one.
+
 ### health_trends
 
 - `data_type` - any cached type with a daily series; ECG readings and rhythm alerts are episodes and have no trend. Default: `activity`.
