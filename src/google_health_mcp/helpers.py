@@ -99,11 +99,15 @@ def format_duration(minutes: int | float | None) -> str:
 
 # Empty-cache results carry a "Try live=True" hint (wording varies per tool).
 # In offline mode live=True is unavailable, so any such hint is rewritten on
-# the way out (see _annotate_offline).
+# the way out (see _annotate_offline). A raised refusal never passes through
+# that, so it asks for the hint instead (errors.wants_live_hint) and this is
+# the one place that chooses the wording.
 _OFFLINE_HINT = (
     "Offline mode is on (GOOGLE_HEALTH_MCP_OFFLINE); the host that owns the cache must "
     "sync this period. Live fetch is disabled here."
 )
+
+LIVE_HINT = "Try live=True to re-fetch this window from the API."
 
 
 def _annotate_offline(result: str) -> str:
@@ -154,12 +158,17 @@ def require_auth(func):
             result = await func(*args, **kwargs)
         except HealthOfflineError as e:
             # Offline mode answers with one clean message, so this clause stays
-            # above the GoogleHealthError one it descends from.
+            # above the GoogleHealthError one it descends from. That also means
+            # wants_live_hint is never read for this type, and its message is
+            # already the offline explanation.
             if config.OFFLINE_MODE:
                 return format_response({"error": str(e), "offline_mode": True})
             raise ToolError(str(e)) from e
         except GoogleHealthError as e:
-            raise ToolError(str(e)) from e
+            said = str(e)
+            if e.wants_live_hint:
+                said = f"{said} {_OFFLINE_HINT if config.OFFLINE_MODE else LIVE_HINT}"
+            raise ToolError(said) from e
 
         return _annotate_offline(result) if config.OFFLINE_MODE else result
 

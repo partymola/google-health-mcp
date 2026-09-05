@@ -8,6 +8,17 @@ from it without a cycle.
 class GoogleHealthError(Exception):
     """An error this package raises on purpose, with text written for the model.
 
+    `wants_live_hint` asks `require_auth` to append the advice about re-fetching
+    a window, which is worded one way normally and another in offline mode. The
+    raise site therefore never writes that sentence itself: a refusal is raised
+    rather than returned, so it does not pass the response path that corrects
+    the hint, and a raise site holding its own copy would be corrected only
+    where someone remembered to. The hint is appended after a space, so a
+    message that asks for one ends in a full stop. Reading the attribute is
+    safe on any caught instance because every class here descends from this
+    one, which `test_every_exception_this_package_defines_reaches_the_model`
+    pins for its own reasons.
+
     `require_auth` converts these into `ToolError`, whose message `mcp` keeps
     on the wire; every other exception reaches the client as `Error executing
     tool <name>`. Anything not descended from this is treated as unplanned,
@@ -21,6 +32,8 @@ class GoogleHealthError(Exception):
     catching that type.
     """
 
+    wants_live_hint = False
+
 
 class InvalidDateError(GoogleHealthError, ValueError):
     """A date argument the tools cannot parse.
@@ -29,6 +42,19 @@ class InvalidDateError(GoogleHealthError, ValueError):
     any caller catching it, which `test_invalid_format_raises` and
     `test_invalid_relative_raises` pin.
     """
+
+
+class UnknownExerciseType(GoogleHealthError):
+    """A workout filter matching no name the cache holds.
+
+    Google names the workouts, so what a caller may ask for is whatever the
+    cache holds rather than a set this package could declare in a schema.
+    Its message names those, which is why it must reach the model, and it
+    says the cache rather than the person: a name absent from it can be a
+    window that was never synced, which is also why it asks for the hint.
+    """
+
+    wants_live_hint = True
 
 
 class LiveRefreshFailed(GoogleHealthError, RuntimeError):

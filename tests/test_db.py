@@ -109,7 +109,7 @@ class TestSaveAndQuery:
         assert rows[0]["name"] == "Running"
         assert rows[0]["log_id"] == "log123"
 
-    def test_exercise_type_filter(self, tmp_db):
+    def test_exercise_name_filter(self, tmp_db):
         db.save_exercise(
             tmp_db,
             "log1",
@@ -146,12 +146,17 @@ class TestSaveAndQuery:
         )
         tmp_db.commit()
 
-        walks = db.query_exercises(tmp_db, "2026-03-15", "2026-03-15", "walk")
+        walks = db.query_exercises(tmp_db, "2026-03-15", "2026-03-15", "Walk")
         assert len(walks) == 1
         assert walks[0]["name"] == "Walk"
 
-        cycles = db.query_exercises(tmp_db, "2026-03-15", "2026-03-15", "cycling")
-        assert len(cycles) == 1
+        both = db.query_exercises(tmp_db, "2026-03-15", "2026-03-15", ["Walk", "Cycling"])
+        assert len(both) == 2
+
+        # A name is matched exactly here: deciding which stored names a
+        # caller's filter means belongs above this layer.
+        assert db.query_exercises(tmp_db, "2026-03-15", "2026-03-15", "walk") == []
+        assert db.query_exercises(tmp_db, "2026-03-15", "2026-03-15", []) == []
 
         all_ex = db.query_exercises(tmp_db, "2026-03-15", "2026-03-15")
         assert len(all_ex) == 2

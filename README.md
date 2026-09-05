@@ -117,7 +117,7 @@ Offline and read-only: it reports which paths resolved where, whether the creden
 
 ```json
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "findings": [
     {
       "check": "stopped-series",
@@ -184,7 +184,7 @@ All query tools except `health_get_devices` and `health_get_lifetime_stats`, whi
 - `end_date` - `YYYY-MM-DD`. Default: today.
 - `live` - if true, re-fetch this window from the API before reading the cache. A failed refresh is reported rather than silently answered from the cache.
 
-`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead.
+`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead.
 
 ### health_sync
 

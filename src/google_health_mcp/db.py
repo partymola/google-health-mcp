@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -473,20 +474,35 @@ def query_activity(conn: sqlite3.Connection, start_date: str, end_date: str) -> 
     return _rows_to_dicts(rows)
 
 
+def exercise_names(conn: sqlite3.Connection) -> list[str]:
+    """Every workout name held, in the spelling it was stored under."""
+    rows = conn.execute(
+        "SELECT DISTINCT name FROM exercises WHERE name IS NOT NULL ORDER BY name"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
 def query_exercises(
-    conn: sqlite3.Connection, start_date: str, end_date: str, exercise_type: str | None = None
+    conn: sqlite3.Connection,
+    start_date: str,
+    end_date: str,
+    names: str | Sequence[str] | None = None,
 ) -> list[dict]:
-    if exercise_type:
-        rows = conn.execute(
-            "SELECT * FROM exercises WHERE date >= ? AND date <= ? "
-            "AND LOWER(name) LIKE ? ORDER BY date, start_time",
-            (start_date, end_date, f"%{exercise_type.lower()}%"),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM exercises WHERE date >= ? AND date <= ? ORDER BY date, start_time",
-            (start_date, end_date),
-        ).fetchall()
+    """Workouts in a window, narrowed to named ones when given some.
+
+    Names match exactly, and which stored names a caller's filter means is
+    decided above this layer: SQL's `LOWER` folds ASCII alone, so a name
+    outside it would pass a Python fold here and match nothing.
+    """
+    sql = "SELECT * FROM exercises WHERE date >= ? AND date <= ?"
+    params: list = [start_date, end_date]
+    if names is not None:
+        wanted = [names] if isinstance(names, str) else list(names)
+        # No name asked for matches no row. Reading an empty sequence as "no
+        # filter" would answer a narrowed question with the whole window.
+        sql += f" AND name IN ({','.join('?' * len(wanted))})" if wanted else " AND 1 = 0"
+        params.extend(wanted)
+    rows = conn.execute(sql + " ORDER BY date, start_time", params).fetchall()
     return _rows_to_dicts(rows)
 
 

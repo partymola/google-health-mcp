@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.0 - 2026-09-06
+
+### Fixed
+
+- `health_get_exercises` refuses an `exercise_type` that matches no workout name in your cache, instead of reporting the period as empty. A typo came back as `No exercise entries found for this period`, which says you did not train rather than that the filter could not be used, and a caller has no way to tell one from the other. The refusal names the workouts the cache holds and keeps the `live=True` hint, since a name absent from the cache may be a window that was never synced rather than a workout you have never done. Google names the workouts, so those names are read from your own data rather than declared in the tool's schema, and a workout type recorded for the first time needs no change here.
+- In offline mode the refusal says live fetch is disabled and that the host owning the cache must sync the period, rather than suggesting `live=True`. An empty answer already said that, but a refusal is raised rather than returned, so it bypassed the correction.
+- A filter is matched against stored names in one place, so a name outside ASCII is found whatever case you ask in. The match ran in SQL, whose `LOWER` folds ASCII alone, so `LÄUFEN` found nothing while `CYCLING` worked.
+
+### Changed
+
+- `exercise_type` now refuses two things it used to answer. A value matching no cached name is refused rather than reported as an empty period, and `%` and `_` are ordinary characters rather than SQL wildcards, so `%` no longer matches every workout. It is still a substring match rather than an exact one.
+
 ## 1.3.0 - 2026-09-02
 
 ### Fixed
