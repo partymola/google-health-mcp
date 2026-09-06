@@ -41,6 +41,11 @@ _SEVERITY_MARK = {OK: "ok  ", WARN: "warn", FAIL: "FAIL"}
 # these, so they are part of the interface: adding one is free, changing one is
 # a breaking change that fails silently at the consumer.
 STOPPED_SERIES = "stopped-series"
+# Why a `stopped-series` condition is absent for a type that otherwise fits it.
+# A monitor gating on the slug above sees that condition disappear; without
+# this it cannot tell "the series recovered" from "this build stopped judging
+# it", and a slug cannot be given to a consumer retroactively.
+SERIES_NEVER_FILLED = "series-never-filled"
 
 # Google refresh tokens expire after six months of disuse. The file is
 # rewritten on every access-token refresh, so an untouched one means nothing
@@ -679,6 +684,60 @@ _ESTABLISHED_DAYS = 15
 _USER_LOGGED_TYPES = frozenset({"exercises", "food_log", "weight", "core_temperature"})
 
 
+def _never_filled_types(conn: sqlite3.Connection) -> set[str]:
+    """Types no successful sync has ever recorded a row for.
+
+    That is the whole claim, and the finding's wording keeps to it. Where those
+    rows *did* come from is not knowable here, and the tempting explanation -
+    that they were imported - is the benign branch of exactly the ambiguity
+    `_check_stopped_series` exists to doubt. A normaliser reading a renamed
+    field produces the same evidence. So this says who did not write them, and
+    stops.
+
+    What it buys is that the finding stops being permanent. A type this sync
+    has never filled cannot resume, so warning about it warns forever, and a
+    warning nothing can clear is the state the report then spends its life in.
+
+    Positive evidence only. A type absent from `sync_log`, or whose total is
+    NULL, is unknown and stays judged: `doctor` runs on databases this package
+    did not write. **The `typeof` guard is what makes that true rather than
+    intended** - SQLite sums a column of `'n/a'` or `''` to a REAL `0.0`, which
+    compares equal to 0 in Python, so a foreign writer's junk would otherwise
+    exempt a type that genuinely stopped. Every legitimate zero sums to an
+    INTEGER, because the column has INTEGER affinity.
+
+    Only `ok` rows count. A type whose every run errored also records no rows,
+    and that is a fault rather than a type this API does not serve.
+
+    Three limits, none of them closable here, all worth knowing before someone
+    "fixes" this into something worse:
+
+    - **A rebuilt database retires the evidence.** Two remedies in this module
+      tell a user to re-create the cache; do that for a type that had already
+      broken upstream and every later `ok` row is a zero, so it is exempt from
+      then on. Losing `sync_log` alone does it too.
+    - **The total counts rows this package WROTE, not what the API returned.**
+      `sync_exercises` skips days another provider already recorded, so a fully
+      covered history logs `ok` with zero. Unreachable while `exercises` is in
+      `_USER_LOGGED_TYPES`, and a reason not to remove it from that set idly.
+    - **Rows written by a run that ended non-`ok` are invisible**, since the
+      save is committed while the status excludes the row from the sum. The
+      cursor does not advance on such a run, so the next one normally re-fetches
+      and produces a positive count.
+
+    Cancelling positive and negative counts also sum to zero. No writer here
+    produces a negative, so it is stated rather than guarded.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT data_type FROM sync_log WHERE status = 'ok' GROUP BY data_type "
+            "HAVING SUM(records_added) = 0 AND typeof(SUM(records_added)) = 'integer'"
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return set()
+    return {row[0] for row in rows}
+
+
 def _days_with_rows(conn: sqlite3.Connection, data_type: str, first: date, last: date) -> int:
     try:
         row = conn.execute(
@@ -720,6 +779,7 @@ def _check_stopped_series(conn: sqlite3.Connection, newest: dict[str, str]) -> l
         return []
 
     recent_first = reference - timedelta(days=_STOPPED_RECENT_DAYS - 1)
+    never_filled = _never_filled_types(conn)
 
     findings = []
     for data_type in sorted(newest):
@@ -741,6 +801,21 @@ def _check_stopped_series(conn: sqlite3.Connection, newest: dict[str, str]) -> l
             conn, data_type, stopped_at - timedelta(days=_STOPPED_PRIOR_DAYS - 1), stopped_at
         )
         if established < _ESTABLISHED_DAYS:
+            continue
+        if data_type in never_filled:
+            # Reported rather than skipped: a diagnostic that goes quiet about
+            # a type reads as one that went blind, and the next reader would
+            # re-derive why the series ends where it does.
+            findings.append(
+                Finding(
+                    f"{data_type} series",
+                    OK,
+                    f"No successful sync of {data_type} has ever recorded a row, so the "
+                    f"rows ending {newest[data_type]} were not written by this sync and "
+                    "the series it ends is not one this sync can resume.",
+                    check=SERIES_NEVER_FILLED,
+                )
+            )
             continue
         findings.append(
             Finding(

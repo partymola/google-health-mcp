@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.0 - 2026-09-06
+
+### Fixed
+
+- `doctor` no longer reports a data type as a stopped series when no successful sync has ever recorded a row for it. Such a series cannot resume, so the warning was permanent, and a warning nothing can clear is the state the report then spends its life in. Where a monitor matches the `stopped-series` slug it also held that monitor down, which on a monitor carrying other signals silenced those too.
+- The exempted type is still reported, graded `ok`, carrying the new `series-never-filled` check name. A check that simply goes quiet about a type reads as one that has gone blind, and a monitor watching `stopped-series` cannot otherwise tell a series that recovered from one this build stopped judging.
+
+### Changed
+
+- The exemption is on positive evidence only, and says only what it observed: that no successful sync wrote those rows, never where they came from. A type absent from `sync_log`, or whose `records_added` total is NULL, is unknown and judged exactly as before, so an existing cache and one this package did not write both keep today's behaviour. Only `ok` rows count, because a run that errored records no rows either. And the total must sum to an integer: SQLite sums a text column to a real `0.0`, so a foreign writer storing something other than a count would otherwise exempt a type that genuinely stopped.
+
 ## 1.4.0 - 2026-09-06
 
 ### Fixed

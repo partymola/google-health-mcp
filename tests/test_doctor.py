@@ -1170,7 +1170,10 @@ class TestASeriesThatHasStopped:
 
         findings = doctor.run_checks()
 
-        stopped = [f for f in findings if "hrv" in f.detail]
+        # Match the slug, never the prose. `detail` carries the type name on
+        # the OK finding an exempt series produces too, so a substring test
+        # here is satisfied by an implementation that never warns at all.
+        stopped = [f for f in findings if f.check == doctor.STOPPED_SERIES and "hrv" in f.name]
         assert stopped, "a series that stopped filling was not reported"
         assert all(f.severity != doctor.FAIL for f in stopped), (
             "the cause can be behavioural, so this is a warning and not a failure"
@@ -1228,9 +1231,9 @@ class TestASeriesThatHasStopped:
         conn.commit()
         conn.close()
 
-        assert [f for f in doctor.run_checks() if "hrv" in f.detail], (
-            "a series dead longer than the two windows combined was not reported"
-        )
+        assert [
+            f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES and "hrv" in f.name
+        ], "a series dead longer than the two windows combined was not reported"
 
     def test_the_remediation_names_a_flag_that_can_reach_the_gap(self, setup_paths):
         """`--days` is read only when there is no cursor, and a stopped series
@@ -1299,9 +1302,9 @@ class TestASeriesThatHasStopped:
         conn.commit()
         conn.close()
 
-        assert [f for f in doctor.run_checks() if "hrv" in f.detail], (
-            "exactly the threshold was treated as not established"
-        )
+        assert [
+            f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES and "hrv" in f.name
+        ], "exactly the threshold was treated as not established"
 
     def test_a_type_with_no_history_is_not_reported(self, setup_paths):
         """Empty because this account has none of it, not because it broke."""
@@ -1350,6 +1353,269 @@ class TestASeriesThatHasStopped:
         findings = doctor.run_checks()
 
         assert not [f for f in findings if "skin_temperature" in f.detail]
+
+
+class TestASeriesThisSyncHasNeverFilled:
+    """History that arrived by import, from a source this API does not serve.
+
+    The density check cannot tell a row this package synced from one an import
+    left behind, so a type whose whole history came from an import reads as a
+    dense series that stopped on the day the import did. That finding is
+    correct, permanent, and clearable by nothing: re-syncing returns what it
+    always returned, which is nothing.
+
+    A permanent warning is worse than no warning. It is the state the report
+    then spends its life in, and where a monitor matches the slug it holds that
+    monitor down, which on a monitor shared with other signals silences them
+    too.
+
+    So the exemption is on POSITIVE evidence only - `sync_log` saying this type
+    has been synced and produced nothing, ever. Absence of a `sync_log`, or a
+    total that is NULL rather than zero, is unknown and judged exactly as
+    before.
+    """
+
+    def _fill(self, conn, table, dates, **columns):
+        for day in dates:
+            getattr(db, f"save_{table}")(conn, {"date": day, **columns})
+
+    def _days(self, first: int, count: int) -> list[str]:
+        start = date(2026, 3, 1) + timedelta(days=first)
+        return [(start + timedelta(days=i)).isoformat() for i in range(count)]
+
+    def _log(self, conn, rows):
+        """rows are (data_type, status, records_added)."""
+        for data_type, status, added in rows:
+            conn.execute(
+                "INSERT INTO sync_log (synced_at, data_type, status, records_added) "
+                "VALUES (?, ?, ?, ?)",
+                ("2026-04-01T00:00:00+00:00", data_type, status, added),
+            )
+
+    def _stopped_cache(self, db_path, log_rows):
+        """A dense hrv series that stops, with sleep carrying on."""
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.get_db(db_path)
+        self._fill(conn, "hrv", self._days(0, 30), daily_rmssd=30.0)
+        self._fill(conn, "sleep", self._days(0, 50), total_minutes=420)
+        self._log(conn, log_rows)
+        conn.commit()
+        conn.close()
+
+    def test_a_type_the_sync_has_only_ever_returned_nothing_for_is_not_reported(self, setup_paths):
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", 0), ("hrv", "ok", 0), ("sleep", "ok", 7)])
+
+        assert not [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            "a series this sync has never once filled was reported as having stopped"
+        )
+
+    def test_it_is_still_named_in_the_report_rather_than_silently_skipped(self, setup_paths):
+        """A check that goes quiet reads as a check that went blind."""
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", 0), ("sleep", "ok", 7)])
+
+        named = [f for f in doctor.run_checks() if "hrv" in f.name]
+        assert named, "the exempt type vanished from the report entirely"
+        assert all(f.severity == doctor.OK for f in named), (
+            "an exemption must not be graded as a problem"
+        )
+
+    def test_a_type_the_sync_has_filled_is_still_reported(self, setup_paths):
+        """The signal itself, which the exemption must not weaken."""
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", 30), ("sleep", "ok", 7)])
+
+        assert [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            "a series that filled and then stopped was exempted"
+        )
+
+    def test_a_cache_with_no_sync_log_rows_is_judged_exactly_as_before(self, setup_paths):
+        """Absence of evidence exempts nothing - every existing cache is this."""
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [])
+
+        assert [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            "an empty sync_log was read as evidence that the sync never filled the type"
+        )
+
+    def test_a_null_records_added_is_unknown_rather_than_zero(self, setup_paths):
+        """`doctor` runs on databases this package did not write."""
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", None), ("hrv", "ok", None)])
+
+        assert [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            "a NULL total was read as a measured zero"
+        )
+
+    def test_a_type_that_has_only_ever_failed_is_still_reported(self, setup_paths):
+        """A sync erroring on every run also adds no records, and that is a
+        fault rather than an import artefact. Only successful runs count."""
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "error", 0), ("hrv", "auth_error", 0)])
+
+        assert [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            "a type whose every sync failed was exempted as though it were imported"
+        )
+
+    def test_a_type_that_filled_once_and_then_stopped_is_never_exempt(self, setup_paths):
+        """The safety property the whole exemption rests on, and the only
+        fixture that pins it: a total, not the newest run and not the smallest.
+
+        This is the production failure the check exists for - a renamed field
+        makes a healthy type return `ok` with zero rows from some day onward -
+        so every later run reads as empty. Anything that judges on one run
+        rather than the sum exempts it forever.
+        """
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(
+            db_path,
+            [("hrv", "ok", 30), ("hrv", "ok", 0), ("hrv", "ok", 0), ("sleep", "ok", 7)],
+        )
+
+        assert [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            "a type that filled and then went empty was exempted"
+        )
+
+    def test_a_partial_run_that_added_nothing_does_not_count_as_filling(self, setup_paths):
+        """`partial` is a rate-limited run: it proves the request was made, not
+        that the type has data. Only `ok` rows are evidence either way.
+
+        The `partial` row carries a non-zero count deliberately: with zero the
+        sum is the same whether or not the status filter is there, so the test
+        would pass against an implementation counting every status.
+        """
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", 0), ("hrv", "partial", 9)])
+
+        assert not [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            "a rate-limited run alongside empty successes defeated the exemption"
+        )
+
+    def test_the_exemption_says_why_the_series_ends_where_it_does(self, setup_paths):
+        """Naming the type is not the point; explaining it is. Without the
+        reason a reader works it out again from nothing, which is the cost the
+        OK finding exists to avoid."""
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", 0), ("sleep", "ok", 7)])
+
+        exempt = [f for f in doctor.run_checks() if f.severity == doctor.OK and "hrv" in f.name]
+        assert exempt
+        last_row = self._days(0, 30)[-1]
+        for finding in exempt:
+            assert last_row in finding.detail, "the detail does not say where the series ends"
+
+    def test_the_exemption_claims_only_what_it_observed(self, setup_paths):
+        """It knows no successful sync wrote those rows. It does NOT know they
+        were imported - a normaliser reading a renamed field leaves the same
+        evidence, and that is the failure this whole check exists to doubt. A
+        finding that picks the benign branch of that ambiguity talks a reader
+        out of the fault."""
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", 0), ("sleep", "ok", 7)])
+
+        exempt = [f for f in doctor.run_checks() if f.check == doctor.SERIES_NEVER_FILLED]
+        assert exempt
+        for finding in exempt:
+            assert "import" not in finding.detail.lower(), (
+                "the finding asserts a provenance this package cannot observe"
+            )
+
+    def test_the_exemption_carries_its_own_stable_check_name(self, setup_paths):
+        """A monitor gating on `stopped-series` sees that condition vanish. A
+        slug is the only thing that tells it why, and one cannot be added
+        retroactively for a release already in the wild."""
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", 0), ("sleep", "ok", 7)])
+
+        exempt = [f for f in doctor.run_checks() if f.check == doctor.SERIES_NEVER_FILLED]
+        assert exempt, "the exemption carries no machine-readable check name"
+        assert all(f.severity == doctor.OK for f in exempt)
+
+    def test_the_never_filled_slug_is_the_literal_consumers_match_on(self):
+        assert doctor.SERIES_NEVER_FILLED == "series-never-filled"
+
+    @pytest.mark.parametrize("junk", ["n/a", "", "none"])
+    def test_a_non_numeric_count_is_not_a_measured_zero(self, setup_paths, junk):
+        """SQLite sums a column of text to a REAL 0.0, which equals 0 in
+        Python - so without a type guard a foreign writer's junk exempts a type
+        that genuinely stopped, which is the one outcome this must never have.
+        """
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [("hrv", "ok", junk), ("hrv", "ok", junk)])
+
+        assert [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            f"a records_added of {junk!r} was read as a measured zero"
+        )
+
+    def test_what_the_sync_writes_for_an_empty_type_is_what_this_reads(
+        self, setup_paths, monkeypatch
+    ):
+        """The exemption rests on `run_sync` logging `ok` with a count of 0 for
+        a type that returned nothing. Every other test here writes `sync_log`
+        by hand, so a change to the writer would leave them all green while the
+        exemption silently stopped firing.
+
+        Driven through `run_sync` for that reason, following
+        `test_a_sync_auth_failure_lands_as_the_status_doctor_grades_as_auth`:
+        the connection is pinned explicitly, since `db` binds `DB_PATH` at
+        import and patching config alone sends the writer elsewhere.
+        """
+        from google_health_mcp.tools import sync_tools
+
+        _config_dir, db_path = setup_paths
+        self._stopped_cache(db_path, [])
+        # Held before the patch: `sync_tools.db` is this same module object, so
+        # patching its `get_db` replaces the one every caller sees.
+        real_get_db = db.get_db
+        conn = real_get_db(db_path)
+        monkeypatch.setattr("google_health_mcp.config.OFFLINE_MODE", False)
+        monkeypatch.setattr(sync_tools.db, "get_db", lambda *a, **k: conn)
+
+        # run_sync closes the connection in its own finally, so read it back
+        # through a fresh one rather than the handle handed to it.
+        sync_tools.run_sync(["hrv"], handlers={"hrv": lambda *a, **k: 0})
+
+        verify = real_get_db(db_path)
+        row = verify.execute(
+            "SELECT status, records_added FROM sync_log WHERE data_type = 'hrv' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        verify.close()
+        assert row is not None, "run_sync recorded nothing for a type that returned no rows"
+        assert (row["status"], row["records_added"]) == ("ok", 0), (
+            "run_sync no longer writes ok/0 for an empty type, which is what the exemption reads"
+        )
+
+        assert not [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES], (
+            "the exemption did not fire on a sync_log the sync itself wrote"
+        )
+
+    def test_the_exemption_is_per_type_rather_than_a_switch(self, setup_paths):
+        """Two candidates at once, one exempt and one not.
+
+        With a single candidate in the fixture, "exempt this type" and "exempt
+        everything" are the same observation - so an implementation returning
+        every cached type passes. This is the A/B that separates them.
+        """
+        _config_dir, db_path = setup_paths
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = db.get_db(db_path)
+        self._fill(conn, "hrv", self._days(0, 30), daily_rmssd=30.0)
+        self._fill(conn, "spo2", self._days(0, 30), avg=96.0)
+        self._fill(conn, "sleep", self._days(0, 50), total_minutes=420)
+        # hrv has produced rows; spo2 never has.
+        self._log(conn, [("hrv", "ok", 30), ("spo2", "ok", 0), ("sleep", "ok", 7)])
+        conn.commit()
+        conn.close()
+
+        findings = doctor.run_checks()
+        stopped = [f for f in findings if f.check == doctor.STOPPED_SERIES]
+
+        assert [f for f in stopped if "hrv" in f.name], "the filled type lost its warning"
+        assert not [f for f in stopped if "spo2" in f.name], (
+            "the never-filled type was still reported"
+        )
 
 
 class TestTheMachineReadableReport:
