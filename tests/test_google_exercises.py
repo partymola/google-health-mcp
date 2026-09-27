@@ -117,6 +117,10 @@ class TestTheFields:
         sync([_exercise(metrics={"distanceMillimeters": "5000000"})])
         assert db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")[0]["distance_km"] == 5.0
 
+    def test_calories_are_kept_as_sent(self, tmp_db, sync):
+        sync([_exercise(metrics={"caloriesKcal": 89.6})])
+        assert db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")[0]["calories"] == 89.6
+
     def test_metrics_a_workout_lacks_stay_absent(self, tmp_db, sync):
         """Steps and distance are absent on some exercise types, present on others."""
         sync([_exercise(metrics={"caloriesKcal": 89})])

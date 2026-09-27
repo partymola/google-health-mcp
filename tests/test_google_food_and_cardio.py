@@ -94,13 +94,13 @@ class TestFoodLogMergesItsTwoSources:
             rollups={
                 "nutrition-log": [_rollup_point("nutritionLog", {"energy": {"kcalSum": 1850.5}})],
                 "hydration-log": [
-                    _rollup_point("hydrationLog", {"amountConsumed": {"millilitersSum": 1250.0}})
+                    _rollup_point("hydrationLog", {"amountConsumed": {"millilitersSum": 1250.5}})
                 ],
             }
         )
         row = db.query_food_log(tmp_db, "2026-03-15", "2026-03-15")[0]
-        assert row["calories_in"] == 1850
-        assert row["water_ml"] == 1250
+        assert row["calories_in"] == 1850.5
+        assert row["water_ml"] == 1250.5
 
     def test_a_day_with_only_water_keeps_the_calories_already_stored(self, tmp_db, sync_food_log):
         """The two sources are independent, and a quiet one withdraws nothing."""

@@ -53,7 +53,9 @@ class TestTheSourcesMerge:
         assert len(rows) == 1
         assert rows[0]["steps"] == 8000
         assert rows[0]["floors"] == 12
-        assert rows[0]["calories_out"] == 2508
+        # As Google sent it: the column is INTEGER, and SQLite keeps a REAL
+        # there rather than truncating it.
+        assert rows[0]["calories_out"] == 2508.9
 
     def test_distance_converts_from_millimetres(self, tmp_db, sync_activity):
         """The API sends millimetres; the column has always held kilometres."""
@@ -86,7 +88,7 @@ class TestTheSourcesMerge:
                 "active-energy-burned": [_rollup_day("activeEnergyBurned", {"kcalSum": 400.0})],
             }
         )
-        assert db.query_activity(tmp_db, "2026-03-15", "2026-03-15")[0]["calories_out"] == 2508
+        assert db.query_activity(tmp_db, "2026-03-15", "2026-03-15")[0]["calories_out"] == 2508.9
 
 
 class TestActiveZoneMinutes:

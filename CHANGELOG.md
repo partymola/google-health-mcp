@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The first schema migrations: an existing database gains these columns on open. Rows synced before the upgrade keep them empty until a re-sync of their window with `sync --since`.
+- A day's calories burned, a day's food calories and water, and a workout's calories are stored as Google sends them, decimals included, rather than cut to a whole number. Rows synced before the upgrade keep the whole number until their window is re-synced.
+- Body temperature readings are now corrected by a re-sync rather than left as first stored, which is what lets the new fields fill on readings already held.
 
 ## 1.6.0 - 2026-09-28
 

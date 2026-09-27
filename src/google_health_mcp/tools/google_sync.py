@@ -343,11 +343,7 @@ def sync_activity(conn, start, end) -> int:
         "floors", start, end, "floors", lambda p: _number(p.get("countSum"), int)
     )
     calories = _rollup_values(
-        "total-calories",
-        start,
-        end,
-        "totalCalories",
-        lambda p: None if (k := _number(p.get("kcalSum"), float)) is None else int(k),
+        "total-calories", start, end, "totalCalories", lambda p: _number(p.get("kcalSum"), float)
     )
     count = 0
     for day in sorted(set(steps) | set(distance) | set(floors) | set(calories)):
@@ -709,7 +705,7 @@ def sync_exercises(conn, start, end) -> int:
             "date": day,
             "name": payload.get("displayName") or payload.get("exerciseType"),
             "duration_min": None if seconds is None else round(seconds / 60),
-            "calories": _number(metrics.get("caloriesKcal"), int),
+            "calories": _number(metrics.get("caloriesKcal"), float),
             "avg_hr": _number(metrics.get("averageHeartRateBeatsPerMinute"), int),
             "steps": _number(metrics.get("steps"), int),
             "distance_km": None if millimetres is None else round(millimetres / 1_000_000, 6),
@@ -875,22 +871,14 @@ def sync_food_log(conn, start, end) -> int:
         start,
         end,
         "nutritionLog",
-        lambda p: (
-            None
-            if (kcal := _number((p.get("energy") or {}).get("kcalSum"), float)) is None
-            else int(kcal)
-        ),
+        lambda p: _number((p.get("energy") or {}).get("kcalSum"), float),
     )
     water = _rollup_values(
         "hydration-log",
         start,
         end,
         "hydrationLog",
-        lambda p: (
-            None
-            if (ml := _number((p.get("amountConsumed") or {}).get("millilitersSum"), float)) is None
-            else int(ml)
-        ),
+        lambda p: _number((p.get("amountConsumed") or {}).get("millilitersSum"), float),
     )
     count = 0
     for day in sorted(set(calories) | set(water)):
