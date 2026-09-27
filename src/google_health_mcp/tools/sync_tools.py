@@ -228,7 +228,10 @@ def auto_sync_if_stale(data_type: str) -> None:
         finally:
             conn.close()
 
-        if last_sync is not None and last_sync.date() >= date.today():
+        # `synced_at` is stored in UTC and "today" is local, so compare in local
+        # time: otherwise, east of UTC, a sync made after local midnight reads
+        # as yesterday's and every query re-syncs until UTC catches up.
+        if last_sync is not None and last_sync.astimezone().date() >= date.today():
             return
 
         run_sync([data_type])

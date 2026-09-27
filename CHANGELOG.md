@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.6.0 - 2026-09-28
 
 ### Added
 
@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `health_get_spo2` and `health_trends` no longer tell the model that an imported night's `min`/`max` and a synced night's `avg_ci_low`/`avg_ci_high` are different measurements that must never be combined. On the history checked, the imported pair matched Google's bounds on every night carrying both. Stored data and responses are unchanged.
+- A query tool no longer re-syncs on every call in the hours after local midnight east of UTC. Its once-a-day check compared the last sync's UTC date with the local date, so a sync made after local midnight read as the day before.
 - `doctor` no longer tells an upgraded install that the tables this version added have lost their history. A database an older release last wrote simply lacks them, and nothing is lost.
 
 ## 1.5.0 - 2026-09-06

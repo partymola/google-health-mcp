@@ -7,6 +7,7 @@ that mocks a transport can only reach it through whichever provider is current.
 """
 
 import sqlite3
+import sys
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -355,6 +356,45 @@ class TestAutoSyncOffline:
         mock_last_sync.return_value = None
         auto_sync_if_stale("heart_rate")
         mock_run_sync.assert_called_once()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no time.tzset")
+def test_a_sync_after_local_midnight_counts_for_the_local_day(tmp_path, monkeypatch):
+    """`synced_at` is UTC and the gate's "today" is local. East of UTC a sync
+    made after local midnight falls on the previous UTC date, and compared
+    naively every query until UTC catches up re-runs the sync."""
+    import time
+
+    from google_health_mcp.tools import sync_tools
+
+    monkeypatch.setenv("TZ", "Etc/GMT-14")  # UTC+14, no daylight saving
+    time.tzset()
+    monkeypatch.setattr("google_health_mcp.config.OFFLINE_MODE", False)
+    try:
+
+        class LocalToday(date):
+            @classmethod
+            def today(cls):
+                return date(2026, 3, 11)
+
+        db_path = tmp_path / "google_health.db"
+        real_get_db = db.get_db
+        seed = real_get_db(db_path)
+        # 01:00 on 11 March locally is still 10 March in UTC.
+        seed.execute(
+            "INSERT INTO sync_log (synced_at, data_type, status) VALUES (?, 'sleep', 'ok')",
+            ("2026-03-10T11:00:00+00:00",),
+        )
+        seed.commit()
+        seed.close()
+        monkeypatch.setattr(sync_tools, "date", LocalToday)
+        monkeypatch.setattr(sync_tools.db, "get_db", lambda *a, **k: real_get_db(db_path))
+        with patch.object(sync_tools, "run_sync") as run:
+            sync_tools.auto_sync_if_stale("sleep")
+        run.assert_not_called()
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 def test_an_unnamed_failure_still_leaves_a_sync_log_row(tmp_path, monkeypatch):
