@@ -79,8 +79,9 @@ async def health_get_core_temperature(
         end_date: End date as "YYYY-MM-DD". Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
-    Returns one entry per logged reading with datetime (YYYY-MM-DDThh:mm:ss)
-    and temp_celsius.
+    Returns one entry per logged reading with datetime (YYYY-MM-DDThh:mm:ss),
+    temp_celsius, measurement_location (where it was taken, e.g. "MOUTH" or
+    "EAR", as logged), reading_id and data_source.
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 

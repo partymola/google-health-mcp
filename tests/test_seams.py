@@ -424,8 +424,8 @@ class TestTheMigrationLockstep:
         """Two lists restate SCHEMA's tables, and a table missing from either fails quietly.
 
         The exclusions are named rather than inferred, so each stays a
-        decision: core_temperature is written with INSERT OR IGNORE, and
-        sync_log, authorisation and account hold no dated measurement.
+        decision: sync_log is append-only, and sync_log, authorisation and
+        account hold no dated measurement.
         """
         conn = sqlite3.connect(":memory:")
         try:
@@ -436,7 +436,7 @@ class TestTheMigrationLockstep:
                     "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
                 )
             }
-            assert set(db._UPSERT_KEYS) == tables - {"core_temperature", "sync_log"}
+            assert set(db._UPSERT_KEYS) == tables - {"sync_log"}
             assert set(db._DATA_TABLE_MAP) == tables - {"sync_log", "authorisation", "account"}
             assert all(t == name for name, t in db._DATA_TABLE_MAP.items())
 
@@ -505,8 +505,6 @@ class TestTheMigrationLockstep:
         monkeypatch.setattr(db, "_upsert", lambda conn, table, row: seen.append(table))
 
         for name, table in helpers.items():
-            if name == "save_core_temperature":
-                continue
             assert table in db._UPSERT_KEYS, f"{name} upserts into no known table"
             row = {
                 c: "2026-03-10" if c == "date" else None
@@ -523,15 +521,6 @@ class TestTheMigrationLockstep:
             assert seen == [table], f"{name} did not upsert into {table}"
             stored = tmp_db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             assert stored == 0, f"{name} wrote {stored} row(s) with _upsert stubbed out"
-
-        # Keyed by (datetime, temp_celsius), so a changed reading is a new row
-        # rather than a correction - the one helper that must not upsert.
-        seen.clear()
-        db.save_core_temperature(
-            tmp_db, {"datetime": "2026-03-10T07:00:00", "date": "2026-03-10", "temp_celsius": 36.6}
-        )
-        assert tmp_db.execute("SELECT COUNT(*) FROM core_temperature").fetchone()[0] == 1
-        assert seen == [], "save_core_temperature must not upsert"
 
 
 def test_the_readme_json_example_matches_what_doctor_emits():

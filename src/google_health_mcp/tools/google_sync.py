@@ -618,19 +618,33 @@ def sync_body_fat_readings(conn, start, end) -> int:
 def sync_core_temperature(conn, start, end) -> int:
     """Manually logged body temperature, keyed by timestamp and value.
 
-    Google gives these an `id`, which the table does not key on: keying on
-    (timestamp, value) keeps a re-synced day idempotent against rows that
-    arrived without one. Adopting the id would be a migration rather than a
-    normaliser decision.
+    Google gives these an `id`, which is stored but not keyed on: the table's
+    key predates it, and changing a primary key is a table rebuild rather than
+    a migration. The other fields are written as None when absent, since the
+    row is one reading rather than a day several writers share.
     """
     count = 0
-    for day, stamp, payload in _samples("core-body-temperature", "coreBodyTemperature", start, end):
-        celsius = _number(payload.get("temperatureCelsius"), float)
-        if celsius is None:
+    for point in api.list_google_data_points("core-body-temperature", *_window(start, end)):
+        payload = point.get("coreBodyTemperature")
+        if not isinstance(payload, dict):
             continue
-        count += db.save_core_temperature(
-            conn, {"datetime": stamp, "date": day, "temp_celsius": celsius}
+        day, stamp = _civil(payload)
+        celsius = _number(payload.get("temperatureCelsius"), float)
+        if day is None or celsius is None:
+            continue
+        db.save_core_temperature(
+            conn,
+            {
+                "datetime": stamp,
+                "date": day,
+                "temp_celsius": celsius,
+                "reading_id": _text(payload.get("id")),
+                "measurement_location": _text(payload.get("measurementLocation")),
+                "data_source": _source(point),
+                "provider": PROVIDER,
+            },
         )
+        count += 1
     conn.commit()
     return count
 

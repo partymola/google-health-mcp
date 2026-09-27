@@ -270,34 +270,38 @@ class TestSaveAndQuery:
 
     def test_core_temperature_same_timestamp_distinct_values_both_kept(self, tmp_db):
         """Two distinct readings sharing one second-resolution timestamp both survive."""
-        n1 = db.save_core_temperature(
+        db.save_core_temperature(
             tmp_db,
             {"datetime": "2026-03-15T08:00:00", "date": "2026-03-15", "temp_celsius": 37.4},
         )
-        n2 = db.save_core_temperature(
+        db.save_core_temperature(
             tmp_db,
             {"datetime": "2026-03-15T08:00:00", "date": "2026-03-15", "temp_celsius": 38.1},
         )
         tmp_db.commit()
-        assert (n1, n2) == (1, 1)
         rows = db.query_core_temperature(tmp_db, "2026-03-15", "2026-03-15")
         # Ordered by (datetime, temp_celsius)
         assert [r["temp_celsius"] for r in rows] == [37.4, 38.1]
 
-    def test_core_temperature_exact_duplicate_ignored(self, tmp_db):
-        """An exact (timestamp, value) repeat de-duplicates idempotently on re-save."""
-        n1 = db.save_core_temperature(
+    def test_core_temperature_exact_repeat_corrects_rather_than_duplicating(self, tmp_db):
+        """An exact (timestamp, value) repeat is the same reading, and a re-save updates it."""
+        db.save_core_temperature(
             tmp_db,
             {"datetime": "2026-03-15T08:00:00", "date": "2026-03-15", "temp_celsius": 37.4},
         )
-        n2 = db.save_core_temperature(
+        db.save_core_temperature(
             tmp_db,
-            {"datetime": "2026-03-15T08:00:00", "date": "2026-03-15", "temp_celsius": 37.4},
+            {
+                "datetime": "2026-03-15T08:00:00",
+                "date": "2026-03-15",
+                "temp_celsius": 37.4,
+                "measurement_location": "MOUTH",
+            },
         )
         tmp_db.commit()
-        assert (n1, n2) == (1, 0)
         rows = db.query_core_temperature(tmp_db, "2026-03-15", "2026-03-15")
         assert len(rows) == 1
+        assert rows[0]["measurement_location"] == "MOUTH"
 
     def test_cardio_fitness_save_query(self, tmp_db):
         db.save_cardio_fitness(
@@ -559,8 +563,8 @@ class TestEcgAndIrn:
     """The two tables keyed by an episode rather than by a day.
 
     Both are keyed by the reading's own identifier rather than by date: a
-    day can hold several ECGs, and unlike core temperature they arrive with
-    an id, so there is no timestamp-and-value key to invent.
+    day can hold several ECGs, and they have always arrived with an id, so
+    there is no timestamp-and-value key to invent as core temperature has.
     """
 
     def test_an_ecg_round_trips_with_its_waveform(self, tmp_db):

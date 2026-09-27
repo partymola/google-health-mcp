@@ -503,10 +503,7 @@ class TestNoWriterStampsADayItDidNotMeasure:
             ):
                 handler(tmp_db, date(2026, 3, 1), date(2026, 4, 1))
             for table, row in written:
-                # .get, not [table]: core_temperature is outside _UPSERT_KEYS,
-                # and a writer routed through the upsert to fill its provider
-                # should fail this assertion rather than raise a KeyError.
                 carried = set(row) - {"provider", "data_source"}
-                assert carried - set(db._UPSERT_KEYS.get(table, ())), (
+                assert carried - set(db._UPSERT_KEYS[table]), (
                     f"{name} wrote a row into {table} carrying nothing but its key and provider"
                 )

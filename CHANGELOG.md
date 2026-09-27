@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `health_get_sleep_sessions` returns each sleep session as Google recorded it, where `health_get_sleep` sums a night: its type, Google's metadata (main sleep, nap, manually edited, stage status), its full summary, and the device that recorded it. Every stage segment, short awakening and out-of-bed segment is returned with `include_stages`; without it, how many of each. `sync --types` and `health_sync` accept `sleep_sessions`.
 - `health_get_weight_readings` returns every weigh-in and body-fat reading as Google recorded each one, where `health_get_weight` keeps one row a day: the reading in Google's own unit, when it was taken, and the device or app that recorded it. `sync --types` and `health_sync` accept `weight_readings` and `body_fat_readings`.
 - `health_get_exercises` returns everything else a workout carries: its end time and UTC offsets, Google's own active duration, notes, and Google's metrics summary whole (pace, speed, elevation gain, heart-rate zone durations, mobility), its metadata and data source. Every exercise event, split and split summary is returned with `include_detail`; without it, how many of each.
+- `health_get_core_temperature` returns where each reading was taken (`measurement_location`), Google's id for it, and its data source.
 
 ### Changed
 

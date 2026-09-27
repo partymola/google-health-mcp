@@ -146,6 +146,9 @@ CREATE TABLE IF NOT EXISTS core_temperature (
     date TEXT NOT NULL,
     temp_celsius REAL,
     provider TEXT,
+    reading_id TEXT,
+    measurement_location TEXT,
+    data_source TEXT,
     PRIMARY KEY (datetime, temp_celsius)
 );
 
@@ -308,6 +311,9 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("exercises", "splits", "TEXT"),
     ("exercises", "split_summaries", "TEXT"),
     ("exercises", "data_source", "TEXT"),
+    ("core_temperature", "reading_id", "TEXT"),
+    ("core_temperature", "measurement_location", "TEXT"),
+    ("core_temperature", "data_source", "TEXT"),
 )
 
 
@@ -333,10 +339,7 @@ def get_db(db_path: Path | str | None = None) -> sqlite3.Connection:
 
 # --- Save helpers ---
 
-# The conflict target for each table an upsert writes. core_temperature is
-# absent deliberately: its primary key is (datetime, temp_celsius), so a
-# changed reading is a new row rather than a correction, and it keeps the
-# INSERT OR IGNORE below. sync_log is append-only.
+# The conflict target for each table an upsert writes. sync_log is append-only.
 _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "heart_rate": ("date",),
     "activity": ("date",),
@@ -348,6 +351,7 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "azm": ("date",),
     "breathing_rate": ("date",),
     "skin_temperature": ("date",),
+    "core_temperature": ("datetime", "temp_celsius"),
     "cardio_fitness": ("date",),
     "food_log": ("date",),
     "ecg": ("reading_id",),
@@ -448,21 +452,14 @@ def save_skin_temperature(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "skin_temperature", row)
 
 
-def save_core_temperature(conn: sqlite3.Connection, row: dict) -> int:
-    """Insert one manually-logged core-temperature reading. Returns rows inserted (0 or 1).
+def save_core_temperature(conn: sqlite3.Connection, row: dict):
+    """Write one hand-logged body temperature, keyed by (datetime, temp_celsius).
 
-    Keyed by (datetime, temp_celsius), not date: core temperatures are logged by
-    hand and a day may hold several readings. Timestamps are second-resolution,
-    so two genuinely distinct readings can share one - keying on the (timestamp,
-    value) pair keeps both, while INSERT OR IGNORE still de-duplicates exact
-    repeats idempotently when a boundary day is re-synced.
+    Timestamps are second-resolution, so two distinct readings can share one,
+    and the pair keeps both. A reading whose value is edited upstream is a new
+    row rather than a correction, since the value is part of its key.
     """
-    cur = conn.execute(
-        """INSERT OR IGNORE INTO core_temperature (datetime, date, temp_celsius)
-        VALUES (:datetime, :date, :temp_celsius)""",
-        row,
-    )
-    return cur.rowcount
+    _upsert(conn, "core_temperature", row)
 
 
 def save_cardio_fitness(conn: sqlite3.Connection, row: dict):

@@ -119,3 +119,44 @@ class TestCoreTemperature:
         sync(google_sync.sync_core_temperature, points)
         sync(google_sync.sync_core_temperature, points)
         assert len(db.query_core_temperature(tmp_db, "2026-03-15", "2026-03-15")) == 1
+
+    def test_everything_else_the_reading_carries_is_stored(self, tmp_db, sync):
+        point = _sample(
+            "coreBodyTemperature",
+            {"temperatureCelsius": 37.2, "id": "abc", "measurementLocation": "EAR"},
+        )
+        point["dataSource"] = {"platform": "FICTIONAL"}
+        sync(google_sync.sync_core_temperature, {"core-body-temperature": [point]})
+        (row,) = db.query_core_temperature(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["reading_id"] == "abc"
+        assert row["measurement_location"] == "EAR"
+        assert row["data_source"] == {"platform": "FICTIONAL"}
+        assert row["provider"] == "google"
+
+    def test_a_re_sync_fills_a_reading_stored_before_those_fields_were(self, tmp_db, sync):
+        """The old writer ignored a reading it already held, so the new
+        columns would have stayed empty on every existing row."""
+        db.save_core_temperature(
+            tmp_db, {"datetime": "2026-03-15T11:39:50", "date": "2026-03-15", "temp_celsius": 37.2}
+        )
+        tmp_db.commit()
+        point = _sample("coreBodyTemperature", {"temperatureCelsius": 37.2, "id": "abc"})
+        sync(google_sync.sync_core_temperature, {"core-body-temperature": [point]})
+        (row,) = db.query_core_temperature(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["reading_id"] == "abc"
+        assert row["provider"] == "google"
+
+    def test_what_a_reading_lacks_is_stored_as_absent(self, tmp_db, sync):
+        with_location = _sample(
+            "coreBodyTemperature", {"temperatureCelsius": 37.2, "measurementLocation": "EAR"}
+        )
+        without = _sample("coreBodyTemperature", {"temperatureCelsius": 37.2})
+        sync(google_sync.sync_core_temperature, {"core-body-temperature": [with_location]})
+        sync(google_sync.sync_core_temperature, {"core-body-temperature": [without]})
+        (row,) = db.query_core_temperature(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["measurement_location"] is None
+
+    def test_a_reading_with_no_value_is_skipped(self, tmp_db, sync):
+        point = _sample("coreBodyTemperature", {"id": "abc"})
+        assert sync(google_sync.sync_core_temperature, {"core-body-temperature": [point]}) == 0
+        assert db.query_core_temperature(tmp_db, "2026-03-01", "2026-04-01") == []
