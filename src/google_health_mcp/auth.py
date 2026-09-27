@@ -221,6 +221,13 @@ def _google_token_store(payload: dict, previous: dict) -> dict:
         store["refresh_token_expires_at"] = previous["refresh_token_expires_at"]
     elif isinstance(granted, (int, float)) and not isinstance(granted, bool):
         store["refresh_token_expires_at"] = time.time() + granted
+    # The scopes Google reports granting, which is the only record of what a
+    # grant can read: a refresh never widens it. Absent means unknown, not none.
+    scope = payload.get("scope")
+    if isinstance(scope, str):
+        store["scope"] = scope
+    elif isinstance(previous.get("scope"), str):
+        store["scope"] = previous["scope"]
     return store
 
 

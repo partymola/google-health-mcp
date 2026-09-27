@@ -254,6 +254,46 @@ class TestWhatARefreshStores:
                 auth.refresh_google_token()
 
 
+class TestTheGrantedScopesAreRecorded:
+    """What Google says it granted is kept, so a missing permission can be named.
+
+    A grant does not gain scopes on refresh, so a release that asks for a new
+    one leaves every existing install without it until the user re-consents,
+    and nothing else on disk can say so.
+    """
+
+    _GRANTED = (
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly "
+        "https://www.googleapis.com/auth/googlehealth.ecg.readonly"
+    )
+
+    def test_a_refresh_records_what_it_reports(self, tmp_path):
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        payload = {"access_token": "new", "scope": self._GRANTED}
+        with patch(
+            "urllib.request.urlopen", return_value=TestWhatARefreshStores()._respond(payload)
+        ):
+            auth.refresh_google_token()
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert stored["scope"] == self._GRANTED
+
+    def test_a_response_that_omits_it_keeps_the_stored_one(self):
+        store = auth._google_token_store({"access_token": "a"}, {"scope": self._GRANTED})
+        assert store["scope"] == self._GRANTED
+
+    def test_a_consent_that_reports_none_records_none(self):
+        """Unknown is not empty: an empty string would read as no permission at all."""
+        assert "scope" not in auth._google_token_store({"access_token": "a"}, {})
+
+    @pytest.mark.parametrize("value", [["a"], 7, None, True], ids=["list", "int", "null", "bool"])
+    def test_an_unusable_one_keeps_the_stored_one(self, value):
+        store = auth._google_token_store(
+            {"access_token": "a", "scope": value}, {"scope": self._GRANTED}
+        )
+        assert store["scope"] == self._GRANTED
+
+
 class TestTheAuthorisationUrl:
     def test_it_asks_for_a_refresh_token_every_time(self):
         """access_type=offline yields one at all; prompt=consent yields one again.
