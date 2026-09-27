@@ -33,6 +33,21 @@ class HealthAuthError(GoogleHealthError):
     """Token expired or invalid, re-auth needed."""
 
 
+ACCOUNT_NOT_LINKED_MESSAGE = (
+    "The Google account this server is authorised as has no Google Health data. "
+    "Run: google-health-mcp auth, and choose the account your health data is in."
+)
+
+
+class AccountNotLinked(HealthAuthError):
+    """The grant belongs to a Google account with no health data linked.
+
+    Google answers every request with 400 `FAILED_PRECONDITION`, reason
+    `ACCOUNT_NOT_LINKED` - the result of picking the wrong account on the
+    consent screen, which only re-authorising fixes.
+    """
+
+
 class HealthOfflineError(GoogleHealthError):
     """A live API call was attempted while offline/cache-only mode is on.
 
@@ -256,6 +271,17 @@ def _classify_google_api_error(error: urllib.error.HTTPError):
     )
 
 
+def _is_account_not_linked(error: urllib.error.HTTPError) -> bool:
+    """Whether a 400 carries Google's ACCOUNT_NOT_LINKED reason. Reads, never quotes."""
+    try:
+        details = ((json.loads(error.read().decode()) or {}).get("error") or {}).get("details")
+    except Exception:
+        return False
+    return isinstance(details, list) and any(
+        isinstance(d, dict) and d.get("reason") == "ACCOUNT_NOT_LINKED" for d in details
+    )
+
+
 def google_get(path: str, params: dict, body: dict | None = None) -> dict:
     """One authenticated request against the Google Health API.
 
@@ -299,6 +325,8 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
             raise _classify_google_api_error(e) from e
         if e.code == 504:
             raise GoogleGatewayTimeout("Google timed out serving the request.") from e
+        if e.code == 400 and _is_account_not_linked(e):
+            raise AccountNotLinked(ACCOUNT_NOT_LINKED_MESSAGE) from e
         raise HealthAPIError(f"API error {e.code} for {path}") from e
     except (TimeoutError, urllib.error.URLError) as e:
         raise HealthAPIError("Network error. Check your connection.") from e

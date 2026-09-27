@@ -328,6 +328,52 @@ class TestFailures:
             with pytest.raises(api.HealthAPIError):
                 api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
 
+    _NOT_LINKED = json.dumps(
+        {
+            "error": {
+                "code": 400,
+                "status": "FAILED_PRECONDITION",
+                "message": "SECRETMARKER The account is not linked.",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "ACCOUNT_NOT_LINKED",
+                        "domain": "health.googleapis.com",
+                    }
+                ],
+            }
+        }
+    ).encode()
+
+    def test_an_account_with_no_health_data_says_to_pick_another(self):
+        """Measured: consenting as the wrong Google account answers every request
+        with 400 FAILED_PRECONDITION / ACCOUNT_NOT_LINKED. As a bare 400 it read
+        like a server fault, and re-running auth is the only fix."""
+        with patch("urllib.request.urlopen", side_effect=_http_error(400, self._NOT_LINKED)):
+            with pytest.raises(api.AccountNotLinked) as caught:
+                api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
+        assert str(caught.value) == api.ACCOUNT_NOT_LINKED_MESSAGE
+        assert "SECRETMARKER" not in str(caught.value)
+
+    def test_it_is_an_auth_error_so_doctor_grades_it_as_one(self):
+        """It will not clear on its own, which is what `auth_error` means to doctor."""
+        assert issubclass(api.AccountNotLinked, api.HealthAuthError)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            json.dumps({"error": {"status": "INVALID_ARGUMENT", "message": "bad filter"}}).encode(),
+            b"<html>not json</html>",
+            json.dumps({"error": {"details": "not-a-list"}}).encode(),
+        ],
+        ids=["another-400", "unreadable", "malformed-details"],
+    )
+    def test_any_other_400_stays_an_api_error(self, body):
+        with patch("urllib.request.urlopen", side_effect=_http_error(400, body)):
+            with pytest.raises(api.HealthAPIError) as caught:
+                api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
+        assert not isinstance(caught.value, api.HealthAuthError)
+
     def test_an_unknown_data_type_is_refused_before_the_network(self):
         with patch("urllib.request.urlopen") as m:
             with pytest.raises(ValueError, match="not-a-type"):

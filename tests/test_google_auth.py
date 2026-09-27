@@ -294,6 +294,73 @@ class TestTheGrantedScopesAreRecorded:
         assert store["scope"] == self._GRANTED
 
 
+class TestFinishingAConsent:
+    """What happens once Google has handed back tokens.
+
+    The account check exists because picking the wrong account on the consent
+    screen produces a grant that works and reads nothing: every request then
+    answers ACCOUNT_NOT_LINKED, and until this check that was discovered at
+    the first sync, if at all.
+    """
+
+    _RAW = {"access_token": "a", "refresh_token": "r", "scope": "x"}
+
+    def _finish(self, tmp_path, probe):
+        from google_health_mcp import api
+
+        _write_client(tmp_path)
+        with patch.object(api, "google_get", probe):
+            try:
+                auth._finish_consent(dict(self._RAW))
+            except SystemExit as stop:
+                return stop.code
+        return 0
+
+    def test_the_tokens_are_saved_before_the_account_is_checked(self, tmp_path, capsys):
+        """Saving first means a wrong-account grant is replaced by re-running
+        auth, never left half-written."""
+        from google_health_mcp import api
+
+        code = self._finish(tmp_path, MagicMock(side_effect=api.AccountNotLinked("x")))
+        assert (tmp_path / "google_tokens.json").exists()
+        assert code == 1
+
+    def test_the_wrong_account_is_named_and_fails_the_command(self, tmp_path, capsys):
+        from google_health_mcp import api
+
+        code = self._finish(tmp_path, MagicMock(side_effect=api.AccountNotLinked("x")))
+        assert code == 1
+        assert api.ACCOUNT_NOT_LINKED_MESSAGE in capsys.readouterr().err
+
+    def test_a_linked_account_finishes_cleanly(self, tmp_path, capsys):
+        assert self._finish(tmp_path, MagicMock(return_value={})) == 0
+        assert "Tokens saved" in capsys.readouterr().out
+
+    def test_a_check_that_cannot_run_does_not_fail_the_consent(self, tmp_path):
+        """A transient failure says nothing about the account."""
+        from google_health_mcp import api
+
+        assert self._finish(tmp_path, MagicMock(side_effect=api.HealthAPIError("net"))) == 0
+
+    def test_the_check_uses_the_token_just_saved(self, tmp_path):
+        """A cached token from before the consent would check the old account."""
+        auth._cached_google_tokens = {"access_token": "stale", "expires_at": 9e12}
+        seen = []
+
+        def probe(*a, **k):
+            seen.append(auth._cached_google_tokens)
+            return {}
+
+        self._finish(tmp_path, probe)
+        assert seen == [None], "the in-memory token was not dropped before the check"
+
+    def test_setup_hands_the_tokens_to_it(self):
+        """The one line joining the interactive flow to everything tested above."""
+        import inspect
+
+        assert "_finish_consent(" in inspect.getsource(auth.setup_google_auth)
+
+
 class TestTheAuthorisationUrl:
     def test_it_asks_for_a_refresh_token_every_time(self):
         """access_type=offline yields one at all; prompt=consent yields one again.

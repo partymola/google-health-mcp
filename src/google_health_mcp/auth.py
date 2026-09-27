@@ -430,7 +430,17 @@ def setup_google_auth():
         print("No response received. Timed out or denied.", file=sys.stderr)
         sys.exit(1)
 
-    raw = auth_result["tokens"]
+    _finish_consent(auth_result["tokens"])
+
+
+def _finish_consent(raw):
+    """Validate and store what the consent returned, then check the account.
+
+    The check runs after saving so a wrong-account grant is replaced by
+    running auth again rather than left half-written. Only Google's own
+    "not linked" answer fails it: any other failure of the check says nothing
+    about the account.
+    """
     if not isinstance(raw, dict) or not raw.get("access_token"):
         # Same guard the refresh path carries: a proxy answering 200 with
         # HTML, or a bare scalar body, otherwise escapes to the CLI as a
@@ -447,6 +457,18 @@ def setup_google_auth():
 
     _save_json(config.GOOGLE_TOKENS_PATH, _google_token_store(raw, {}))
     print("Tokens saved.")
+
+    from . import api  # api imports this module
+
+    invalidate_google_token_cache()
+    try:
+        api.google_get("users/me/pairedDevices", {})
+    except api.AccountNotLinked:
+        print(api.ACCOUNT_NOT_LINKED_MESSAGE, file=sys.stderr)
+        sys.exit(1)
+    except Exception:
+        pass
+
     print("\nSetup complete. Register with Claude Code:")
     exe = shutil.which("google-health-mcp") or "google-health-mcp"
     print(f"  claude mcp add -s user google-health -- {exe}")
