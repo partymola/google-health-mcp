@@ -27,7 +27,8 @@ async def health_get_breathing_rate(
         end_date: End date as "YYYY-MM-DD". Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
-    Returns one entry per night with breaths_per_min.
+    Returns one entry per night with breaths_per_min and data_source (the device
+    and platform Google says recorded it).
     Typical adult range: 12-20 bpm at rest.
     """
     start, end = parse_date(start_date, end_date, default_days=30)

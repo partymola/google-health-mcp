@@ -27,8 +27,10 @@ async def health_get_skin_temperature(
         end_date: End date as "YYYY-MM-DD". Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
-    Returns one entry per night with nightly_relative (degrees C, can be negative)
-    and log_type (e.g. "dermal").
+    Returns one entry per night with nightly_relative (degrees C, can be negative),
+    the absolutes behind it (nightly_absolute, baseline), nightly_stddev_30d (the
+    30-day standard deviation of the relative value), log_type (e.g. "dermal") and
+    data_source (the device and platform Google says recorded it).
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 

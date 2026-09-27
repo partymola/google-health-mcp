@@ -36,6 +36,22 @@ def _number(value, cast):
         return None
 
 
+def _text(value) -> str | None:
+    """An enum or label as Google sent it, or None if it is not a string."""
+    return value if isinstance(value, str) and value else None
+
+
+def _flag(value) -> int | None:
+    """A JSON boolean as 1 or 0, or None: a string or number is not a yes or no."""
+    return int(value) if isinstance(value, bool) else None
+
+
+def _source(point: dict) -> str | None:
+    """The point's `dataSource`, whole, as JSON text."""
+    source = point.get("dataSource")
+    return json.dumps(source) if isinstance(source, dict) and source else None
+
+
 def _date(payload: dict) -> str | None:
     """The day a daily point belongs to, from its own `date` field.
 
@@ -60,11 +76,13 @@ def _window(start, end):
     return start, end + timedelta(days=1)
 
 
-def _daily_rows(data_type: str, start, end, field: str, build):
+def _daily_rows(data_type: str, start, end, field: str, build, qualifiers=frozenset()):
     """Every daily point in the window, as (date, row) pairs ready to store.
 
     `build` returns the columns for one point, or None to skip it. A point
-    with no date of its own is skipped rather than guessed at.
+    with no date of its own is skipped rather than guessed at. `qualifiers`
+    name columns that describe a measurement - how it was calculated, how
+    sure it is - and are stored beside one but never make a row on their own.
     """
     for point in api.list_google_data_points(data_type, *_window(start, end)):
         payload = point.get(field)
@@ -82,8 +100,13 @@ def _daily_rows(data_type: str, start, end, field: str, build):
         # value", so naming every column unconditionally would clear whatever
         # an import left on days Google is quieter about.
         measured = {name: value for name, value in columns.items() if value is not None}
-        if not measured:
+        if not set(measured) - qualifiers:
             continue
+        # After the check, not before: where a point came from is not a
+        # measurement, and a row holding only its source would claim the day.
+        source = _source(point)
+        if source is not None:
+            measured["data_source"] = source
         yield {"date": day, "provider": PROVIDER, **measured}
 
 
@@ -101,7 +124,13 @@ def sync_heart_rate(conn, start, end) -> int:
         start,
         end,
         "dailyRestingHeartRate",
-        lambda p: {"resting_hr": _number(p.get("beatsPerMinute"), int)},
+        lambda p: {
+            "resting_hr": _number(p.get("beatsPerMinute"), int),
+            "calculation_method": _text(
+                (p.get("dailyRestingHeartRateMetadata") or {}).get("calculationMethod")
+            ),
+        },
+        qualifiers=frozenset({"calculation_method"}),
     ):
         db.save_heart_rate_row(conn, row)
         count += 1
@@ -126,6 +155,7 @@ def sync_spo2(conn, start, end) -> int:
             "avg": _number(p.get("averagePercentage"), float),
             "avg_ci_low": _number(p.get("lowerBoundPercentage"), float),
             "avg_ci_high": _number(p.get("upperBoundPercentage"), float),
+            "std_dev": _number(p.get("standardDeviationPercentage"), float),
         },
     ):
         db.save_spo2(conn, row)
@@ -146,6 +176,8 @@ def sync_hrv(conn, start, end) -> int:
             "deep_rmssd": _number(
                 p.get("deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds"), float
             ),
+            "entropy": _number(p.get("entropy"), float),
+            "non_rem_hr": _number(p.get("nonRemHeartRateBeatsPerMinute"), int),
         },
     ):
         db.save_hrv(conn, row)
@@ -189,6 +221,7 @@ def sync_skin_temperature(conn, start, end) -> int:
             "nightly_absolute": nightly,
             "baseline": baseline,
             "nightly_relative": relative,
+            "nightly_stddev_30d": _number(payload.get("relativeNightlyStddev30dCelsius"), float),
         }
 
     count = 0
@@ -703,7 +736,13 @@ def sync_cardio_fitness(conn, start, end) -> int:
         start,
         end,
         "dailyVo2Max",
-        lambda p: {"vo2_max": _number(p.get("vo2Max"), float)},
+        lambda p: {
+            "vo2_max": _number(p.get("vo2Max"), float),
+            "cardio_fitness_level": _text(p.get("cardioFitnessLevel")),
+            "estimated": _flag(p.get("estimated")),
+            "vo2_max_covariance": _number(p.get("vo2MaxCovariance"), float),
+        },
+        qualifiers=frozenset({"cardio_fitness_level", "estimated", "vo2_max_covariance"}),
     ):
         db.save_cardio_fitness(conn, row)
         count += 1

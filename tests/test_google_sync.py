@@ -201,6 +201,178 @@ class TestTheRowsThemselves:
         assert count == 2
 
 
+_SOURCE = {
+    "device": {"displayName": "Fictional Watch"},
+    "platform": "FITBIT",
+    "recordingMethod": "PASSIVELY_MEASURED",
+}
+
+
+class TestWhatTheDailyPointsAlsoCarry:
+    """Everything a daily point reports is stored, as Google reports it."""
+
+    @pytest.mark.parametrize(
+        "handler,field,payload,table,column,expected",
+        [
+            (
+                google_sync.sync_hrv,
+                "dailyHeartRateVariability",
+                {"averageHeartRateVariabilityMilliseconds": 28.4, "entropy": 2.25},
+                "hrv",
+                "entropy",
+                2.25,
+            ),
+            (
+                google_sync.sync_hrv,
+                "dailyHeartRateVariability",
+                {
+                    "averageHeartRateVariabilityMilliseconds": 28.4,
+                    "nonRemHeartRateBeatsPerMinute": "57",
+                },
+                "hrv",
+                "non_rem_hr",
+                57,
+            ),
+            (
+                google_sync.sync_heart_rate,
+                "dailyRestingHeartRate",
+                {
+                    "beatsPerMinute": "60",
+                    "dailyRestingHeartRateMetadata": {"calculationMethod": "WITH_SLEEP"},
+                },
+                "heart_rate",
+                "calculation_method",
+                "WITH_SLEEP",
+            ),
+            (
+                google_sync.sync_spo2,
+                "dailyOxygenSaturation",
+                {"averagePercentage": 95.7, "standardDeviationPercentage": 1.25},
+                "spo2",
+                "std_dev",
+                1.25,
+            ),
+            (
+                google_sync.sync_skin_temperature,
+                "dailySleepTemperatureDerivations",
+                {"nightlyTemperatureCelsius": 33.5, "relativeNightlyStddev30dCelsius": 0.25},
+                "skin_temperature",
+                "nightly_stddev_30d",
+                0.25,
+            ),
+            (
+                google_sync.sync_cardio_fitness,
+                "dailyVo2Max",
+                {"vo2Max": 44.5, "cardioFitnessLevel": "GOOD"},
+                "cardio_fitness",
+                "cardio_fitness_level",
+                "GOOD",
+            ),
+            (
+                google_sync.sync_cardio_fitness,
+                "dailyVo2Max",
+                {"vo2Max": 44.5, "estimated": True},
+                "cardio_fitness",
+                "estimated",
+                1,
+            ),
+            (
+                google_sync.sync_cardio_fitness,
+                "dailyVo2Max",
+                {"vo2Max": 44.5, "estimated": False},
+                "cardio_fitness",
+                "estimated",
+                0,
+            ),
+            (
+                google_sync.sync_cardio_fitness,
+                "dailyVo2Max",
+                {"vo2Max": 44.5, "vo2MaxCovariance": 1.5},
+                "cardio_fitness",
+                "vo2_max_covariance",
+                1.5,
+            ),
+        ],
+    )
+    def test_the_field_is_stored(
+        self, tmp_db, stored, handler, field, payload, table, column, expected
+    ):
+        stored(handler, _points(field, payload))
+        (row,) = getattr(db, f"query_{table}")(tmp_db, "2026-03-15", "2026-03-15")
+        assert row[column] == expected
+        assert type(row[column]) is type(expected)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [{"estimated": "true"}, {"estimated": 1}, {"cardioFitnessLevel": 7}],
+        ids=["string-flag", "integer-flag", "numeric-enum"],
+    )
+    def test_a_value_of_the_wrong_kind_is_absent(self, tmp_db, stored, payload):
+        """A flag that is not a JSON boolean is not a yes or a no, and an enum
+        that is not a string is not one of Google's values."""
+        stored(google_sync.sync_cardio_fitness, _points("dailyVo2Max", {"vo2Max": 44.5, **payload}))
+        (row,) = db.query_cardio_fitness(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["estimated"] is None
+        assert row["cardio_fitness_level"] is None
+
+    @pytest.mark.parametrize(
+        "handler,field,value,table",
+        [
+            (
+                google_sync.sync_heart_rate,
+                "dailyRestingHeartRate",
+                {"beatsPerMinute": "60"},
+                "heart_rate",
+            ),
+            (google_sync.sync_hrv, "dailyHeartRateVariability", {"entropy": 2.25}, "hrv"),
+            (google_sync.sync_spo2, "dailyOxygenSaturation", {"averagePercentage": 95.7}, "spo2"),
+            (
+                google_sync.sync_breathing_rate,
+                "dailyRespiratoryRate",
+                {"breathsPerMinute": 15},
+                "breathing_rate",
+            ),
+            (
+                google_sync.sync_skin_temperature,
+                "dailySleepTemperatureDerivations",
+                {"nightlyTemperatureCelsius": 33.5},
+                "skin_temperature",
+            ),
+            (google_sync.sync_cardio_fitness, "dailyVo2Max", {"vo2Max": 44.5}, "cardio_fitness"),
+        ],
+    )
+    def test_the_data_source_is_stored_whole(self, tmp_db, stored, handler, field, value, table):
+        stored(handler, [{field: {**_day(), **value}, "dataSource": _SOURCE}])
+        (row,) = getattr(db, f"query_{table}")(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["data_source"] == _SOURCE
+
+    def test_a_calculation_method_alone_writes_no_row(self, tmp_db, stored):
+        """How a resting rate was worked out is not a resting rate."""
+        stored(
+            google_sync.sync_heart_rate,
+            _points(
+                "dailyRestingHeartRate",
+                {"dailyRestingHeartRateMetadata": {"calculationMethod": "WITH_SLEEP"}},
+            ),
+        )
+        assert db.query_heart_rate(tmp_db, "2026-03-15", "2026-03-15") == []
+
+    def test_a_source_alone_writes_no_row(self, tmp_db, stored):
+        """Where a point came from is not a measurement of anything."""
+        stored(
+            google_sync.sync_breathing_rate,
+            [{"dailyRespiratoryRate": _day(), "dataSource": _SOURCE}],
+        )
+        assert db.query_breathing_rate(tmp_db, "2026-03-15", "2026-03-15") == []
+
+    def test_an_unreadable_stored_source_reads_as_absent(self, tmp_db):
+        db.save_hrv(tmp_db, {"date": "2026-03-15", "daily_rmssd": 30.0, "data_source": "{not json"})
+        tmp_db.commit()
+        (row,) = db.query_hrv(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["data_source"] is None
+        assert row["daily_rmssd"] == 30.0
+
+
 class TestTheWindowTheLoopHandsOver:
     def test_the_last_day_is_included(self, tmp_db):
         """The loop's end date is inclusive, Google's ranges are closed-open.
@@ -311,7 +483,11 @@ class TestNoWriterStampsADayItDidNotMeasure:
         fails without anyone remembering to write it a test."""
         written: list[tuple[str, dict]] = []
         monkeypatch.setattr(db, "_upsert", lambda conn, table, row: written.append((table, row)))
-        points = [dated_but_empty(t.field) for t in google_sync.api.GOOGLE_TYPES.values()]
+        # Each point carries a source, which is not a measurement either.
+        points = [
+            {**dated_but_empty(t.field), "dataSource": _SOURCE}
+            for t in google_sync.api.GOOGLE_TYPES.values()
+        ]
 
         for name, handler in google_sync.GOOGLE_SYNC_HANDLERS.items():
             written.clear()
@@ -330,6 +506,7 @@ class TestNoWriterStampsADayItDidNotMeasure:
                 # .get, not [table]: core_temperature is outside _UPSERT_KEYS,
                 # and a writer routed through the upsert to fill its provider
                 # should fail this assertion rather than raise a KeyError.
-                assert set(row) - {"provider"} - set(db._UPSERT_KEYS.get(table, ())), (
+                carried = set(row) - {"provider", "data_source"}
+                assert carried - set(db._UPSERT_KEYS.get(table, ())), (
                     f"{name} wrote a row into {table} carrying nothing but its key and provider"
                 )

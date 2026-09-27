@@ -27,7 +27,9 @@ async def health_get_hrv(
         end_date: End date as "YYYY-MM-DD". Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
-    Returns one entry per night with daily_rmssd and deep_rmssd (ms).
+    Returns one entry per night with daily_rmssd and deep_rmssd (ms), entropy,
+    non_rem_hr (non-REM heart rate, bpm) and data_source (the device and platform
+    Google says recorded it).
     RMSSD = root mean square of successive RR interval differences.
     Higher values generally indicate better recovery and parasympathetic activity.
     """

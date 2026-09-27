@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS heart_rate (
     date TEXT PRIMARY KEY,
     resting_hr INTEGER,
     zones TEXT,
-    provider TEXT
+    provider TEXT,
+    calculation_method TEXT,
+    data_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS activity (
@@ -84,14 +86,19 @@ CREATE TABLE IF NOT EXISTS spo2 (
     max REAL,
     avg_ci_low REAL,
     avg_ci_high REAL,
-    provider TEXT
+    provider TEXT,
+    std_dev REAL,
+    data_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS hrv (
     date TEXT PRIMARY KEY,
     daily_rmssd REAL,
     deep_rmssd REAL,
-    provider TEXT
+    provider TEXT,
+    entropy REAL,
+    non_rem_hr INTEGER,
+    data_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS azm (
@@ -106,7 +113,8 @@ CREATE TABLE IF NOT EXISTS azm (
 CREATE TABLE IF NOT EXISTS breathing_rate (
     date TEXT PRIMARY KEY,
     breaths_per_min REAL,
-    provider TEXT
+    provider TEXT,
+    data_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS skin_temperature (
@@ -115,7 +123,9 @@ CREATE TABLE IF NOT EXISTS skin_temperature (
     log_type TEXT,
     nightly_absolute REAL,
     baseline REAL,
-    provider TEXT
+    provider TEXT,
+    nightly_stddev_30d REAL,
+    data_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS core_temperature (
@@ -133,7 +143,11 @@ CREATE TABLE IF NOT EXISTS cardio_fitness (
     vo2_max_low REAL,
     vo2_max_high REAL,
     vo2_max REAL,
-    provider TEXT
+    provider TEXT,
+    cardio_fitness_level TEXT,
+    estimated INTEGER,
+    vo2_max_covariance REAL,
+    data_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS food_log (
@@ -214,18 +228,30 @@ CREATE TABLE IF NOT EXISTS sync_log (
 
 
 # Every column added to a table after a release shipped that table, so a
-# database written by an older version gains it on open.
-#
-# Empty, and that is the state a first release should be in: no version of
-# this package has shipped a different schema, so there is no older database
-# to repair. Data from elsewhere arrives through `importer`, which reads rows
-# and writes them through this package's own writers - it never adopts another
-# database's shape, which is what keeps this list about our own history alone.
+# database written by an older version gains it on open. Data from elsewhere
+# arrives through `importer`, which reads rows and writes them through this
+# package's own writers - it never adopts another database's shape, which is
+# what keeps this list about our own history alone.
 #
 # An entry here is what carries a released schema forward; TestTheMigrationLockstep
 # applies each one to every baseline in tests/schema_baselines/, and doctor
 # excuses exactly the columns listed here while it does.
-MIGRATIONS: tuple[tuple[str, str, str], ...] = ()
+MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("heart_rate", "calculation_method", "TEXT"),
+    ("heart_rate", "data_source", "TEXT"),
+    ("spo2", "std_dev", "REAL"),
+    ("spo2", "data_source", "TEXT"),
+    ("hrv", "entropy", "REAL"),
+    ("hrv", "non_rem_hr", "INTEGER"),
+    ("hrv", "data_source", "TEXT"),
+    ("breathing_rate", "data_source", "TEXT"),
+    ("skin_temperature", "nightly_stddev_30d", "REAL"),
+    ("skin_temperature", "data_source", "TEXT"),
+    ("cardio_fitness", "cardio_fitness_level", "TEXT"),
+    ("cardio_fitness", "estimated", "INTEGER"),
+    ("cardio_fitness", "vo2_max_covariance", "REAL"),
+    ("cardio_fitness", "data_source", "TEXT"),
+)
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -569,6 +595,8 @@ def _rows_to_dicts(rows) -> list[dict]:
                 d["zones"] = json.loads(d["zones"])
             except (json.JSONDecodeError, TypeError):
                 pass
+        if "data_source" in d:
+            d["data_source"] = _decoded(d["data_source"])
         result.append(d)
     return result
 

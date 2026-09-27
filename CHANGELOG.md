@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- The daily types store every field Google sends with them: HRV `entropy` and `non_rem_hr`, the resting heart rate's `calculation_method`, SpO2's `std_dev`, skin temperature's `nightly_stddev_30d`, and cardio fitness's `cardio_fitness_level`, `estimated` and `vo2_max_covariance`. Each also stores `data_source`, the device, platform and recording method Google says the reading came from. The query tools return them.
+
+### Changed
+
+- The first schema migrations: an existing database gains these columns on open. Rows synced before the upgrade keep them empty until a re-sync of their window with `sync --since`.
+
 ## 1.6.0 - 2026-09-28
 
 ### Added

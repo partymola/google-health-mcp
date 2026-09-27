@@ -30,7 +30,9 @@ async def health_get_cardio_fitness(
     measurements - do not average them together or fill one from the other.
     vo2_max_low and vo2_max_high are a reported band (e.g. 39-43); vo2_max is
     a single figure. All in mL/kg/min, higher being better cardiorespiratory
-    fitness.
+    fitness. Beside a single figure Google may report cardio_fitness_level
+    (POOR to EXCELLENT), estimated (1 or 0), vo2_max_covariance and data_source
+    (the device and platform it says recorded it).
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 

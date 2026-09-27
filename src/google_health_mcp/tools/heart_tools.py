@@ -25,7 +25,9 @@ async def health_get_heart_rate(
         end_date: End date as "YYYY-MM-DD". Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
-    Returns one entry per day with resting_hr and zones array.
+    Returns one entry per day with resting_hr, zones array, calculation_method
+    (Google's WITH_SLEEP or ONLY_WITH_AWAKE_DATA) and data_source (the device and
+    platform Google says recorded it).
     Zone data: name, minutes, caloriesOut, max/min HR for each zone.
     """
     start, end = parse_date(start_date, end_date, default_days=30)
