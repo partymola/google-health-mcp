@@ -425,7 +425,7 @@ class TestTheMigrationLockstep:
 
         The exclusions are named rather than inferred, so each stays a
         decision: core_temperature is written with INSERT OR IGNORE, and
-        sync_log holds no dated measurement.
+        sync_log and authorisation hold no dated measurement.
         """
         conn = sqlite3.connect(":memory:")
         try:
@@ -437,7 +437,7 @@ class TestTheMigrationLockstep:
                 )
             }
             assert set(db._UPSERT_KEYS) == tables - {"core_temperature", "sync_log"}
-            assert set(db._DATA_TABLE_MAP) == tables - {"sync_log"}
+            assert set(db._DATA_TABLE_MAP) == tables - {"sync_log", "authorisation"}
             assert all(t == name for name, t in db._DATA_TABLE_MAP.items())
 
             for table, keys in db._UPSERT_KEYS.items():

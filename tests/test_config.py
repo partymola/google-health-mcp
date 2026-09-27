@@ -5,42 +5,15 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from google_health_mcp import api
+import pytest
+
+from google_health_mcp import api, config
 from google_health_mcp.tools import google_sync
 from tests.conftest import FETCHERS
 
-#: The data types fetched under each scope this package requests. Google
-#: publishes a category per scope ("your Google Health sleep data") and no
-#: per-type mapping, so the attribution of a type to a category is ours; what
-#: the test below checks is that every scope has one, not which one.
-_SCOPE_READERS = {
-    "activity_and_fitness": (
-        "steps",
-        "distance",
-        "floors",
-        "total-calories",
-        "active-zone-minutes",
-        "exercise",
-    ),
-    "health_metrics_and_measurements": (
-        "daily-resting-heart-rate",
-        "daily-heart-rate-variability",
-        "daily-oxygen-saturation",
-        "daily-respiratory-rate",
-        "daily-sleep-temperature-derivations",
-        "daily-vo2-max",
-        "weight",
-        "body-fat",
-        "core-body-temperature",
-    ),
-    "sleep": ("sleep",),
-    "nutrition": ("nutrition-log", "hydration-log"),
-    "ecg": ("electrocardiogram",),
-    "irn": ("irregular-rhythm-notification",),
-    # Paired devices is the one endpoint that is neither a list nor a rollup,
-    # so it has no entry in GOOGLE_TYPES to name.
-    "settings": ("list_paired_devices",),
-}
+_SCOPE_READERS = config.GOOGLE_SCOPE_READERS
+#: Readers that are calls outside the data-point collection, so GOOGLE_TYPES
+#: has no entry to name.
 _NOT_A_DATA_TYPE = {"list_paired_devices"}
 
 
@@ -112,11 +85,9 @@ class TestConfigDefaults:
     def test_no_scope_is_asked_for_that_nothing_reads(self):
         """A scope with no reader is a permission the user grants for nothing.
 
-        `profile` was requested and read nowhere for as long as nobody looked,
-        and nothing behavioural can see it: a granted scope changes only the
-        consent screen. Stating the list here in prose did not hold either -
-        adding a scope and a line of prose beside it passed. So each scope
-        names the data types fetched under it, and those are checked against
+        Nothing behavioural can see one: a granted scope changes only the
+        consent screen, and prose beside the list did not hold it. So each
+        scope names what is fetched under it, and those are checked against
         the calls the sync actually makes.
 
         The other direction matters as much and is checked by the same
@@ -141,6 +112,38 @@ class TestConfigDefaults:
         assert _types_the_package_fetches() == set(claimed), (
             "the types this package fetches and the types its scopes authorise have parted"
         )
+
+
+class TestMissingScopes:
+    """Which requested permissions a grant lacks, from what Google reported."""
+
+    def _full(self, *names):
+        return " ".join(f"{config.GOOGLE_SCOPE_PREFIX}{n}.readonly" for n in names)
+
+    def test_a_full_grant_lacks_nothing(self):
+        assert config.missing_scopes(self._full(*config.GOOGLE_SCOPE_READERS)) == []
+
+    def test_each_requested_scope_absent_is_named(self):
+        requested = list(config.GOOGLE_SCOPE_READERS)
+        granted = self._full(*requested[1:-1])
+        assert config.missing_scopes(granted) == [requested[0], requested[-1]]
+
+    def test_extra_granted_scopes_are_ignored(self):
+        granted = self._full(*config.GOOGLE_SCOPE_READERS) + " openid"
+        assert config.missing_scopes(granted) == []
+
+    def test_a_write_scope_does_not_stand_in_for_the_read_one(self):
+        """The package asks for `.readonly` only, so only that counts as held."""
+        names = list(config.GOOGLE_SCOPE_READERS)
+        granted = self._full(*names[1:]) + f" {config.GOOGLE_SCOPE_PREFIX}{names[0]}.writeonly"
+        assert config.missing_scopes(granted) == [names[0]]
+
+    @pytest.mark.parametrize("granted", [None, 7, ["x"]], ids=["none", "int", "list"])
+    def test_nothing_recorded_is_unknown_rather_than_everything_missing(self, granted):
+        assert config.missing_scopes(granted) is None
+
+    def test_an_empty_grant_lacks_everything(self):
+        assert config.missing_scopes("") == list(config.GOOGLE_SCOPE_READERS)
 
 
 class TestConfigOverrides:

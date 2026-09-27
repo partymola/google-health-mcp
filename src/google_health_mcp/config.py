@@ -32,25 +32,60 @@ GOOGLE_API_BASE = "https://health.googleapis.com/v4"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# Read-only, and never a writeonly scope.
+# Each read-only scope requested, and what is read under it: data types by
+# their API path, and the calls outside the data-point collection by function
+# name. Never a writeonly scope.
 #
 # A grant does not gain scopes on refresh, so a scope left out costs every
-# user a second consent. That is not licence to ask for everything: a scope
-# with no reader does not belong here, and exercise GPS (location) is the
-# case in point - it is a location history, and it stays out.
+# user a second consent - but a scope with no reader is a permission granted
+# for nothing, and `test_no_scope_is_asked_for_that_nothing_reads` holds this
+# map equal to what the package actually fetches, in both directions.
 #
-# The scope list published in the developer docs, and the one in the API's own
-# discovery document, are both incomplete - several readonly scopes selectable
-# in the Cloud console appear in neither. Check the console, not either page.
-GOOGLE_SCOPES = (
-    "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly "
-    "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly "
-    "https://www.googleapis.com/auth/googlehealth.sleep.readonly "
-    "https://www.googleapis.com/auth/googlehealth.nutrition.readonly "
-    "https://www.googleapis.com/auth/googlehealth.ecg.readonly "
-    "https://www.googleapis.com/auth/googlehealth.irn.readonly "
-    "https://www.googleapis.com/auth/googlehealth.settings.readonly"
-)
+# Google publishes a category per scope and no per-type mapping, so which
+# scope a type sits under is ours. The scope lists in the developer docs and
+# in the discovery document are both incomplete; check the Cloud console.
+GOOGLE_SCOPE_READERS: dict[str, tuple[str, ...]] = {
+    "activity_and_fitness": (
+        "steps",
+        "distance",
+        "floors",
+        "total-calories",
+        "active-zone-minutes",
+        "exercise",
+    ),
+    "health_metrics_and_measurements": (
+        "daily-resting-heart-rate",
+        "daily-heart-rate-variability",
+        "daily-oxygen-saturation",
+        "daily-respiratory-rate",
+        "daily-sleep-temperature-derivations",
+        "daily-vo2-max",
+        "weight",
+        "body-fat",
+        "core-body-temperature",
+    ),
+    "sleep": ("sleep",),
+    "nutrition": ("nutrition-log", "hydration-log"),
+    "ecg": ("electrocardiogram",),
+    "irn": ("irregular-rhythm-notification",),
+    "settings": ("list_paired_devices",),
+}
+GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/googlehealth."
+GOOGLE_SCOPES = " ".join(f"{GOOGLE_SCOPE_PREFIX}{name}.readonly" for name in GOOGLE_SCOPE_READERS)
+
+
+def missing_scopes(granted) -> list[str] | None:
+    """The requested scopes a grant lacks, by short name, or None if unknown.
+
+    `granted` is the space-separated string Google reports; anything else
+    means nothing was recorded, which is not the same as nothing granted.
+    """
+    if not isinstance(granted, str):
+        return None
+    held = set(granted.split())
+    return [n for n in GOOGLE_SCOPE_READERS if f"{GOOGLE_SCOPE_PREFIX}{n}.readonly" not in held]
+
+
 GOOGLE_CALLBACK_PORT = 8081
 GOOGLE_REDIRECT_URI = f"http://localhost:{GOOGLE_CALLBACK_PORT}"
 

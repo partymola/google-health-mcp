@@ -1,10 +1,13 @@
 """SQLite database schema and helpers for the local health cache."""
 
 import json
+import os
 import sqlite3
 from collections.abc import Sequence
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from .config import DB_PATH
 
@@ -169,6 +172,12 @@ CREATE TABLE IF NOT EXISTS irn (
 
 CREATE INDEX IF NOT EXISTS idx_irn_date ON irn(date);
 
+CREATE TABLE IF NOT EXISTS authorisation (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    missing_scopes TEXT,
+    checked_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS sync_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     synced_at TEXT NOT NULL,
@@ -237,6 +246,7 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "food_log": ("date",),
     "ecg": ("reading_id",),
     "irn": ("alert_id",),
+    "authorisation": ("id",),
 }
 
 
@@ -357,6 +367,66 @@ def save_ecg(conn: sqlite3.Connection, row: dict):
 
 def save_irn(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "irn", row)
+
+
+def save_authorisation(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "authorisation", row)
+
+
+def record_missing_scopes(conn: sqlite3.Connection, missing: list[str] | None):
+    """Record which requested scopes the grant lacks, by name; None if unknown.
+
+    Written by the host that syncs, which holds the token, and read by every
+    host, including offline ones that hold none. Scope names only.
+    """
+    save_authorisation(
+        conn,
+        {
+            "id": 1,
+            "missing_scopes": None if missing is None else json.dumps(missing),
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    conn.commit()
+
+
+def open_readonly(path: Path) -> closing:
+    """Open a database with no possibility of creating or altering it.
+
+    The path is percent-encoded because this is a URI, not a filename: an
+    unescaped `#` would start a fragment, so `?mode=ro` would land inside it
+    and be silently ignored - handing back a writable connection to a
+    truncated path. `quote` leaves `/` alone and escapes `#` and `?`.
+
+    Encoding via `os.fsencode` rather than passing the str: a filename holding
+    non-UTF-8 bytes arrives as surrogate escapes, which `quote` refuses. Going
+    through bytes round-trips those unchanged. `Path.as_uri()` is not usable
+    at all here - it rejects relative paths, and GOOGLE_HEALTH_MCP_DB_PATH may be one.
+    """
+    conn = sqlite3.connect(f"file:{quote(os.fsencode(path))}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return closing(conn)
+
+
+def recorded_missing_scopes(path: Path | str | None = None) -> list[str] | None:
+    """The scopes the last sync found the grant lacking, or None if unknown.
+
+    Read-only and never raising: every tool response asks, on hosts that must
+    not write the shared file, so an absent database, a table from before this
+    record existed, or an unreadable value all answer "unknown".
+    """
+    path = Path(path) if path is not None else DB_PATH
+    if not path.is_file():
+        return None
+    try:
+        with open_readonly(path) as conn:
+            row = conn.execute("SELECT missing_scopes FROM authorisation WHERE id = 1").fetchone()
+    except sqlite3.DatabaseError:
+        return None
+    value = _decoded(row[0]) if row else None
+    if isinstance(value, list) and all(isinstance(name, str) for name in value):
+        return value
+    return None
 
 
 def log_sync(

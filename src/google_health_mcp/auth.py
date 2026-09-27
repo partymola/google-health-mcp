@@ -338,6 +338,19 @@ def invalidate_google_token_cache():
         _cached_google_tokens = None
 
 
+def granted_scopes() -> str | None:
+    """The scopes the stored grant holds, as Google reported them, or None.
+
+    Never raises: this feeds a note, and a token file that cannot be read is
+    reported by whatever tries to use it.
+    """
+    try:
+        scope = json.loads(config.GOOGLE_TOKENS_PATH.read_text()).get("scope")
+    except Exception:
+        return None
+    return scope if isinstance(scope, str) else None
+
+
 def setup_google_auth():
     """Interactive Google consent. Opens a browser, exchanges the code, stores tokens.
 

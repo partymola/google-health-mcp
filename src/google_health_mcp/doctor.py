@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from urllib.parse import quote
 
 from . import config, db
 
@@ -46,6 +45,9 @@ STOPPED_SERIES = "stopped-series"
 # this it cannot tell "the series recovered" from "this build stopped judging
 # it", and a slug cannot be given to a consumer retroactively.
 SERIES_NEVER_FILLED = "series-never-filled"
+# The grant lacks a scope this version requests, so what is read under it
+# cannot sync until the person authorises again.
+MISSING_SCOPES = "missing-scopes"
 
 # Google refresh tokens expire after six months of disuse. The file is
 # rewritten on every access-token refresh, so an untouched one means nothing
@@ -85,21 +87,8 @@ class Finding:
 
 
 def _open_db_readonly(path: Path) -> closing:
-    """Open the database with no possibility of creating or altering it.
-
-    The path is percent-encoded because this is a URI, not a filename: an
-    unescaped `#` would start a fragment, so `?mode=ro` would land inside it
-    and be silently ignored - handing back a writable connection to a
-    truncated path. `quote` leaves `/` alone and escapes `#` and `?`.
-
-    Encoding via `os.fsencode` rather than passing the str: a filename holding
-    non-UTF-8 bytes arrives as surrogate escapes, which `quote` refuses. Going
-    through bytes round-trips those unchanged. `Path.as_uri()` is not usable
-    at all here - it rejects relative paths, and GOOGLE_HEALTH_MCP_DB_PATH may be one.
-    """
-    conn = sqlite3.connect(f"file:{quote(os.fsencode(path))}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return closing(conn)
+    """Open the database with no possibility of creating or altering it."""
+    return db.open_readonly(path)
 
 
 def _reference_schema() -> dict[str, set[str]]:
@@ -455,6 +444,64 @@ def check_credentials() -> list[Finding]:
     if config.OFFLINE_MODE:
         return [Finding("credentials", OK, "not required in offline mode")]
     return _check_client_file() + _check_token_file()
+
+
+def _token_scope() -> str | None:
+    """The scopes the token file says were granted, or None. Names only."""
+    try:
+        scope = json.loads(config.GOOGLE_TOKENS_PATH.read_text()).get("scope")
+    except Exception:
+        return None
+    return scope if isinstance(scope, str) else None
+
+
+def check_authorisation() -> list[Finding]:
+    """Scopes this version requests that the grant does not hold.
+
+    The token file is current, so it wins where it records scopes; otherwise
+    the record the last sync left in the database, which is all a cache-only
+    host has. A grant never gains scopes on refresh, so a release that asks for
+    a new one leaves every existing install short until the person authorises
+    again - which nothing else here would say.
+    """
+    granted = None if config.OFFLINE_MODE else _token_scope()
+    if granted is not None:
+        missing = config.missing_scopes(granted)
+    else:
+        missing = db.recorded_missing_scopes(config.DB_PATH)
+
+    if missing is None:
+        return [
+            Finding(
+                "authorisation",
+                OK,
+                "which permissions the grant holds is not recorded yet; the next "
+                "token refresh on the syncing host records it.",
+                check=MISSING_SCOPES,
+            )
+        ]
+    if not missing:
+        return [
+            Finding(
+                "authorisation",
+                OK,
+                "the grant holds every permission this version reads",
+                check=MISSING_SCOPES,
+            )
+        ]
+    return [
+        Finding(
+            "authorisation",
+            WARN,
+            f"The grant lacks {', '.join(missing)}, so data read under those "
+            "permissions cannot sync.",
+            "Run `google-health-mcp auth` on the syncing host and tick every permission; "
+            "nothing on this host will change it."
+            if config.OFFLINE_MODE
+            else "Run `google-health-mcp auth` and tick every permission.",
+            check=MISSING_SCOPES,
+        )
+    ]
 
 
 def check_database() -> list[Finding]:
@@ -1013,6 +1060,7 @@ def run_checks() -> list[Finding]:
     for check in (
         check_environment,
         check_credentials,
+        check_authorisation,
         check_database,
         check_sync_health,
         check_auth_prerequisites,

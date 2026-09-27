@@ -162,6 +162,13 @@ def main():
             else:
                 print(f"  {dtype}: {status} - {result.get('message', '')}")
 
+        from . import db
+        from .helpers import missing_scopes_note
+
+        missing = db.recorded_missing_scopes()
+        if missing:
+            print(missing_scopes_note(missing), file=sys.stderr)
+
         # Exit non-zero if any type failed in a way that needs attention, so
         # systemd marks the unit failed (and any OnFailure= notifier fires).
         # rate_limited is transient and self-heals on the next run, so it is

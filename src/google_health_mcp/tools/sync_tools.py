@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import anyio
 
-from .. import api, config, db
+from .. import api, auth, config, db
 from ..errors import LiveRefreshFailed
 from ..helpers import format_response, require_auth
 from ..mcp_instance import mcp
@@ -163,6 +163,12 @@ def _run_sync_types(conn, data_types, results, since_date, until_date, today, da
                 logger.error("Could not record a failed sync of %s", dtype)
             results[dtype] = {"status": "error", "message": "Unexpected error during sync."}
 
+    # After the types rather than before: a refresh during them is what brings
+    # the token's record of its scopes up to date.
+    try:
+        db.record_missing_scopes(conn, config.missing_scopes(auth.granted_scopes()))
+    except Exception:
+        logger.error("Could not record the grant's missing scopes")
     return results
 
 

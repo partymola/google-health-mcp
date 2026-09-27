@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import config
+from . import config, db
 from .api import HealthOfflineError
 from .config import GOOGLE_CLIENT_PATH, GOOGLE_TOKENS_PATH
 from .errors import GoogleHealthError, InvalidDateError
@@ -129,6 +129,34 @@ def _annotate_offline(result: str) -> str:
     return json.dumps(parsed, indent=2, default=str)
 
 
+def missing_scopes_note(missing: list[str]) -> str:
+    """What a person is told when the grant lacks scopes this version reads."""
+    return (
+        f"The Google authorisation lacks {', '.join(missing)}, so data read under "
+        "those permissions cannot sync. Run: google-health-mcp auth, on the host "
+        "that syncs, and tick every permission."
+    )
+
+
+def _annotate_authorisation(result: str) -> str:
+    """Add the missing-permission note to a successful object response.
+
+    Read from the shared database rather than the token, so a cache-only host
+    holding no token carries the note too.
+    """
+    missing = db.recorded_missing_scopes()
+    if not missing:
+        return result
+    try:
+        parsed = json.loads(result)
+    except (TypeError, ValueError):
+        return result
+    if not isinstance(parsed, dict):
+        return result
+    parsed["authorisation"] = missing_scopes_note(missing)
+    return json.dumps(parsed, indent=2, default=str)
+
+
 def require_auth(func):
     """Gate a tool on credentials, with offline/cache-only support.
 
@@ -170,6 +198,8 @@ def require_auth(func):
                 said = f"{said} {_OFFLINE_HINT if config.OFFLINE_MODE else LIVE_HINT}"
             raise ToolError(said) from e
 
-        return _annotate_offline(result) if config.OFFLINE_MODE else result
+        if config.OFFLINE_MODE:
+            result = _annotate_offline(result)
+        return _annotate_authorisation(result)
 
     return wrapper
