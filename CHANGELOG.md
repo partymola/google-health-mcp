@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The daily types store every field Google sends with them: HRV `entropy` and `non_rem_hr`, the resting heart rate's `calculation_method`, SpO2's `std_dev`, skin temperature's `nightly_stddev_30d`, and cardio fitness's `cardio_fitness_level`, `estimated` and `vo2_max_covariance`. Each also stores `data_source`, the device, platform and recording method Google says the reading came from. The query tools return them.
 - `health_get_sleep_sessions` returns each sleep session as Google recorded it, where `health_get_sleep` sums a night: its type, Google's metadata (main sleep, nap, manually edited, stage status), its full summary, and the device that recorded it. Every stage segment, short awakening and out-of-bed segment is returned with `include_stages`; without it, how many of each. `sync --types` and `health_sync` accept `sleep_sessions`.
+- `health_get_weight_readings` returns every weigh-in and body-fat reading as Google recorded each one, where `health_get_weight` keeps one row a day: the reading in Google's own unit, when it was taken, and the device or app that recorded it. `sync --types` and `health_sync` accept `weight_readings` and `body_fat_readings`.
 
 ### Changed
 

@@ -220,6 +220,26 @@ CREATE TABLE IF NOT EXISTS sleep_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sleep_sessions_date ON sleep_sessions(date);
 
+CREATE TABLE IF NOT EXISTS weight_readings (
+    reading_id TEXT PRIMARY KEY,
+    datetime TEXT,
+    date TEXT NOT NULL,
+    record TEXT,
+    provider TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_weight_readings_date ON weight_readings(date);
+
+CREATE TABLE IF NOT EXISTS body_fat_readings (
+    reading_id TEXT PRIMARY KEY,
+    datetime TEXT,
+    date TEXT NOT NULL,
+    record TEXT,
+    provider TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_body_fat_readings_date ON body_fat_readings(date);
+
 CREATE TABLE IF NOT EXISTS authorisation (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     missing_scopes TEXT,
@@ -310,6 +330,8 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "height": ("datetime",),
     "exercise_routes": ("log_id",),
     "sleep_sessions": ("session_id",),
+    "weight_readings": ("reading_id",),
+    "body_fat_readings": ("reading_id",),
     "authorisation": ("id",),
 }
 
@@ -449,6 +471,14 @@ def save_sleep_session(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "sleep_sessions", row)
 
 
+def save_weight_reading(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "weight_readings", row)
+
+
+def save_body_fat_reading(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "body_fat_readings", row)
+
+
 def save_authorisation(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "authorisation", row)
 
@@ -554,6 +584,8 @@ _DATA_TABLE_MAP: dict[str, str] = {
     "height": "height",
     "exercise_routes": "exercise_routes",
     "sleep_sessions": "sleep_sessions",
+    "weight_readings": "weight_readings",
+    "body_fat_readings": "body_fat_readings",
 }
 
 
@@ -835,6 +867,28 @@ def query_sleep_sessions(conn: sqlite3.Connection, start_date: str, end_date: st
         session["record"] = _decoded(session["record"])
         sessions.append(session)
     return sessions
+
+
+def _query_readings(conn: sqlite3.Connection, table: str, start_date: str, end_date: str):
+    """Each reading in a date range from one of the reading tables, record decoded."""
+    rows = conn.execute(
+        f"SELECT * FROM {table} WHERE date >= ? AND date <= ? ORDER BY datetime",
+        (start_date, end_date),
+    ).fetchall()
+    readings = []
+    for row in rows:
+        reading = dict(row)
+        reading["record"] = _decoded(reading["record"])
+        readings.append(reading)
+    return readings
+
+
+def query_weight_readings(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:
+    return _query_readings(conn, "weight_readings", start_date, end_date)
+
+
+def query_body_fat_readings(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:
+    return _query_readings(conn, "body_fat_readings", start_date, end_date)
 
 
 def query_food_log(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:

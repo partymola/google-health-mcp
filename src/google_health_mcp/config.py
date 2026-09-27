@@ -126,4 +126,6 @@ CACHED_DATA_TYPES = (
     "height",
     "exercise_routes",
     "sleep_sessions",
+    "weight_readings",
+    "body_fat_readings",
 )

@@ -3,7 +3,7 @@
 import anyio
 
 from .. import db
-from ..helpers import format_response, parse_date, require_auth
+from ..helpers import LIVE_HINT, format_response, parse_date, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -50,6 +50,57 @@ async def health_get_weight(
         )
 
     return format_response({"weight": entries, "count": len(entries)})
+
+
+@mcp.tool()
+@require_auth
+async def health_get_weight_readings(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    live: bool = False,
+) -> str:
+    """Get every weigh-in and body-fat reading, as Google recorded each one.
+
+    health_get_weight keeps one row a day; a scale records each step onto it
+    separately, and this returns every one: the reading in Google's own unit
+    (weightGrams, percentage), when it was taken, and the device or app that
+    recorded it.
+
+    Args:
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
+        end_date: End date as "YYYY-MM-DD". Default: today.
+        live: If true, re-fetch this window from the API before reading the cache.
+
+    Returns weight_readings and body_fat_readings, each entry with reading_id,
+    datetime (local), date, and record (the reading as Google sent it).
+    """
+    start, end = parse_date(start_date, end_date, default_days=30)
+
+    def _refresh():
+        for data_type in ("weight_readings", "body_fat_readings"):
+            refresh_before_query(data_type, start, end, live)
+
+    await anyio.to_thread.run_sync(_refresh)
+
+    def _query():
+        conn = db.get_db()
+        try:
+            return (
+                db.query_weight_readings(conn, start.isoformat(), end.isoformat()),
+                db.query_body_fat_readings(conn, start.isoformat(), end.isoformat()),
+            )
+        finally:
+            conn.close()
+
+    weights, fats = await anyio.to_thread.run_sync(_query)
+    if not weights and not fats:
+        return format_response(
+            {
+                "message": "No weight or body-fat readings found for this period.",
+                "hint": LIVE_HINT,
+            }
+        )
+    return format_response({"weight_readings": weights, "body_fat_readings": fats})
 
 
 @mcp.tool()

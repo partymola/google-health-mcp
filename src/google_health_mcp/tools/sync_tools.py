@@ -288,7 +288,8 @@ async def health_sync(
             "exercises", "sleep", "weight", "spo2", "hrv", "azm",
             "breathing_rate", "skin_temperature", "core_temperature",
             "cardio_fitness", "food_log", "ecg", "irn", "account", "height",
-            "exercise_routes", "sleep_sessions".
+            "exercise_routes", "sleep_sessions", "weight_readings",
+            "body_fat_readings".
             Comma-separated for multiple, e.g. "sleep,hrv". Default: "all".
         days: Days of history for first sync (default: 30). Ignored
             on subsequent syncs (uses last synced date).

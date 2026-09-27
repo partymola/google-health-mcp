@@ -568,6 +568,48 @@ def sync_weight(conn, start, end) -> int:
     return len(days)
 
 
+def _store_readings(conn, points, field: str, save) -> int:
+    """Every sample point given, stored whole under its resource name.
+
+    Dated by the sample's own civil time, as the daily `weight` row is. The
+    fetch stays in each handler, where the scope check can read its data type.
+    """
+    count = 0
+    for point in points:
+        payload = point.get(field)
+        identifier = point.get("name")
+        if not isinstance(payload, dict) or not isinstance(identifier, str) or not identifier:
+            continue
+        day, stamp = _civil(payload)
+        if day is None:
+            continue
+        save(
+            conn,
+            {
+                "reading_id": identifier,
+                "datetime": stamp,
+                "date": day,
+                "record": json.dumps(point),
+                "provider": PROVIDER,
+            },
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+def sync_weight_readings(conn, start, end) -> int:
+    """Every weigh-in, where the daily `weight` row keeps one a day."""
+    points = api.list_google_data_points("weight", *_window(start, end))
+    return _store_readings(conn, points, "weight", db.save_weight_reading)
+
+
+def sync_body_fat_readings(conn, start, end) -> int:
+    """Every body-fat reading, where the daily `weight` row keeps one a day."""
+    points = api.list_google_data_points("body-fat", *_window(start, end))
+    return _store_readings(conn, points, "bodyFat", db.save_body_fat_reading)
+
+
 def sync_core_temperature(conn, start, end) -> int:
     """Manually logged body temperature, keyed by timestamp and value.
 
@@ -979,6 +1021,8 @@ GOOGLE_SYNC_HANDLERS = {
     "height": sync_height,
     "exercise_routes": sync_exercise_routes,
     "sleep_sessions": sync_sleep_sessions,
+    "weight_readings": sync_weight_readings,
+    "body_fat_readings": sync_body_fat_readings,
 }
 
 _METRICS = ("health_metrics_and_measurements",)
@@ -1007,4 +1051,6 @@ HANDLER_SCOPES = {
     "height": _METRICS,
     "exercise_routes": ("activity_and_fitness", "location"),
     "sleep_sessions": ("sleep",),
+    "weight_readings": _METRICS,
+    "body_fat_readings": _METRICS,
 }

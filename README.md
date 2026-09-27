@@ -31,7 +31,8 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 | `health_get_exercise_route` | One workout's GPS route, as the TCX file Google exports |
 | `health_get_sleep` | Duration, stages, sleep period |
 | `health_get_sleep_sessions` | Each session as Google recorded it: metadata, summary, and every stage segment on request |
-| `health_get_weight` | Weight, body fat % |
+| `health_get_weight` | Weight, body fat %, one row a day |
+| `health_get_weight_readings` | Every weigh-in and body-fat reading, as Google recorded each one |
 | `health_get_height` | Height readings |
 | `health_get_spo2` | Nightly blood oxygen saturation |
 | `health_get_hrv` | Heart rate variability (RMSSD) |
@@ -172,7 +173,8 @@ google-health-mcp sync           Sync data to the local cache
                         heart_rate, activity, exercises, sleep, weight, spo2,
                         hrv, azm, breathing_rate, skin_temperature,
                         core_temperature, cardio_fitness, food_log, ecg, irn,
-                        account, height, exercise_routes, sleep_sessions
+                        account, height, exercise_routes, sleep_sessions,
+                        weight_readings, body_fat_readings
   --since YYYY-MM-DD    Fetch from this date, ignoring the incremental cursor
   --until YYYY-MM-DD    Inclusive end date for a --since window; together they
                         re-fetch exactly that window, to repair a gap in the

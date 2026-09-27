@@ -638,9 +638,6 @@ def _check_schema(conn: sqlite3.Connection) -> list[Finding]:
     reporting one would attach the remediation below - destroying and
     rebuilding a cache that needed nothing. A column missing anywhere else
     has nothing to restore it and does break its sync.
-
-    _SELF_HEALING_COLUMNS is empty while `db.MIGRATIONS` is, which is the
-    state of a first release: every column gap is then a real fault.
     """
     expected = _reference_schema()
     present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -735,9 +732,19 @@ _ESTABLISHED_DAYS = 15
 #: weight sync is invisible here. The false positive was judged worse.
 #:
 #: `exercise_routes` follows `exercises`, one route per GPS workout, and
-#: `height` is logged a handful of times in a lifetime.
+#: `height` is logged a handful of times in a lifetime. `weight_readings` and
+#: `body_fat_readings` are the same weigh-ins as `weight`, one row per reading.
 _USER_LOGGED_TYPES = frozenset(
-    {"exercises", "exercise_routes", "food_log", "weight", "core_temperature", "height"}
+    {
+        "exercises",
+        "exercise_routes",
+        "food_log",
+        "weight",
+        "weight_readings",
+        "body_fat_readings",
+        "core_temperature",
+        "height",
+    }
 )
 
 
