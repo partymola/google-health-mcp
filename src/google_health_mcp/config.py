@@ -125,4 +125,5 @@ CACHED_DATA_TYPES = (
     "account",
     "height",
     "exercise_routes",
+    "sleep_sessions",
 )

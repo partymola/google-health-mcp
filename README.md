@@ -30,6 +30,7 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 | `health_get_exercises` | Workouts (name, duration, heart rate, calories) |
 | `health_get_exercise_route` | One workout's GPS route, as the TCX file Google exports |
 | `health_get_sleep` | Duration, stages, sleep period |
+| `health_get_sleep_sessions` | Each session as Google recorded it: metadata, summary, and every stage segment on request |
 | `health_get_weight` | Weight, body fat % |
 | `health_get_height` | Height readings |
 | `health_get_spo2` | Nightly blood oxygen saturation |
@@ -171,7 +172,7 @@ google-health-mcp sync           Sync data to the local cache
                         heart_rate, activity, exercises, sleep, weight, spo2,
                         hrv, azm, breathing_rate, skin_temperature,
                         core_temperature, cardio_fitness, food_log, ecg, irn,
-                        account, height, exercise_routes
+                        account, height, exercise_routes, sleep_sessions
   --since YYYY-MM-DD    Fetch from this date, ignoring the incremental cursor
   --until YYYY-MM-DD    Inclusive end date for a --since window; together they
                         re-fetch exactly that window, to repair a gap in the
@@ -192,7 +193,7 @@ All query tools except `health_get_devices`, `health_get_lifetime_stats`, `healt
 
 `health_get_profile` takes only `live`.
 
-`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead.
+`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead. `health_get_sleep_sessions` also takes `include_stages`, for the same reason: without it each session carries how many stage segments, short awakenings and out-of-bed segments it has, rather than every one.
 
 `health_get_exercise_route` takes a workout's `log_id`. The route text comes back only with `include_tcx`, since it can run to hundreds of kilobytes. Only workouts recorded with GPS have a route, and a sync fetches routes for the workouts in its own window, so an older one needs `health_sync` with `data_types="exercise_routes"` and `since`. A route holds every position you recorded, start and end included: it is cached on disk like the rest, and reaches the model only when `include_tcx` is set.
 

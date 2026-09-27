@@ -479,6 +479,39 @@ def sync_sleep(conn, start, end) -> int:
     return len(nights)
 
 
+def sync_sleep_sessions(conn, start, end) -> int:
+    """Each session, stored whole: the point exactly as Google sent it.
+
+    Keyed by the session's resource name and dated like the nightly row, by
+    its local end, so the two agree on which night a session belongs to.
+    Nothing is extracted but what the key, the date and the ordering need.
+    """
+    count = 0
+    for point in api.list_google_data_points("sleep", *_window(start, end)):
+        payload = point.get("sleep")
+        identifier = point.get("name")
+        if not isinstance(payload, dict) or not isinstance(identifier, str) or not identifier:
+            continue
+        interval = payload.get("interval") or {}
+        night = _local_date(interval.get("endTime"), interval.get("endUtcOffset"))
+        if night is None:
+            continue
+        db.save_sleep_session(
+            conn,
+            {
+                "session_id": identifier,
+                "date": night,
+                "start_time": interval.get("startTime"),
+                "end_time": interval.get("endTime"),
+                "record": json.dumps(point),
+                "provider": PROVIDER,
+            },
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
 def _civil(payload: dict) -> tuple[str | None, str | None]:
     """The local date and timestamp a sample was taken at.
 
@@ -945,6 +978,7 @@ GOOGLE_SYNC_HANDLERS = {
     "account": sync_account,
     "height": sync_height,
     "exercise_routes": sync_exercise_routes,
+    "sleep_sessions": sync_sleep_sessions,
 }
 
 _METRICS = ("health_metrics_and_measurements",)
@@ -972,4 +1006,5 @@ HANDLER_SCOPES = {
     "account": (),
     "height": _METRICS,
     "exercise_routes": ("activity_and_fitness", "location"),
+    "sleep_sessions": ("sleep",),
 }

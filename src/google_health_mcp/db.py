@@ -209,6 +209,17 @@ CREATE TABLE IF NOT EXISTS exercise_routes (
 
 CREATE INDEX IF NOT EXISTS idx_exercise_routes_date ON exercise_routes(date);
 
+CREATE TABLE IF NOT EXISTS sleep_sessions (
+    session_id TEXT PRIMARY KEY,
+    date TEXT NOT NULL,
+    start_time TEXT,
+    end_time TEXT,
+    record TEXT,
+    provider TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sleep_sessions_date ON sleep_sessions(date);
+
 CREATE TABLE IF NOT EXISTS authorisation (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     missing_scopes TEXT,
@@ -298,6 +309,7 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "account": ("resource",),
     "height": ("datetime",),
     "exercise_routes": ("log_id",),
+    "sleep_sessions": ("session_id",),
     "authorisation": ("id",),
 }
 
@@ -433,6 +445,10 @@ def save_exercise_route(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "exercise_routes", row)
 
 
+def save_sleep_session(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "sleep_sessions", row)
+
+
 def save_authorisation(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "authorisation", row)
 
@@ -537,6 +553,7 @@ _DATA_TABLE_MAP: dict[str, str] = {
     "irn": "irn",
     "height": "height",
     "exercise_routes": "exercise_routes",
+    "sleep_sessions": "sleep_sessions",
 }
 
 
@@ -804,6 +821,20 @@ def query_exercise_route(conn: sqlite3.Connection, log_id: str) -> dict | None:
 def route_ids(conn: sqlite3.Connection) -> set[str]:
     """The exercises whose route is already held."""
     return {row[0] for row in conn.execute("SELECT log_id FROM exercise_routes")}
+
+
+def query_sleep_sessions(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:
+    """Each session in a date range, its record decoded."""
+    rows = conn.execute(
+        "SELECT * FROM sleep_sessions WHERE date >= ? AND date <= ? ORDER BY date, start_time",
+        (start_date, end_date),
+    ).fetchall()
+    sessions = []
+    for row in rows:
+        session = dict(row)
+        session["record"] = _decoded(session["record"])
+        sessions.append(session)
+    return sessions
 
 
 def query_food_log(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:
