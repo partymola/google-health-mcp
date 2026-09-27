@@ -458,11 +458,12 @@ def _token_scope() -> str | None:
 def check_authorisation() -> list[Finding]:
     """Scopes this version requests that the grant does not hold.
 
-    The token file is current, so it wins where it records scopes; otherwise
+    The token file is current, so it wins where it records scopes, except in
+    offline mode, where the token is not this host's to read. Otherwise it is
     the record the last sync left in the database, which is all a cache-only
     host has. A grant never gains scopes on refresh, so a release that asks for
     a new one leaves every existing install short until the person authorises
-    again - which nothing else here would say.
+    again.
     """
     granted = None if config.OFFLINE_MODE else _token_scope()
     if granted is not None:
@@ -476,7 +477,7 @@ def check_authorisation() -> list[Finding]:
                 "authorisation",
                 OK,
                 "which permissions the grant holds is not recorded yet; the next "
-                "token refresh on the syncing host records it.",
+                "sync on the syncing host records it.",
                 check=MISSING_SCOPES,
             )
         ]
@@ -666,16 +667,20 @@ def _check_schema(conn: sqlite3.Connection) -> list[Finding]:
             )
         )
     if absent:
-        # Recreated empty by get_db()'s CREATE TABLE IF NOT EXISTS, so this is
-        # not a fault to remedy - but it is not "matches this version" either,
-        # and any history those tables held is gone.
+        # Created empty by get_db()'s CREATE TABLE IF NOT EXISTS, so this is
+        # not a fault to remedy - but it is not "matches this version" either.
+        # A database last written by an older release lacks every table added
+        # since, which is the usual cause and loses nothing; a table that
+        # existed and went missing takes its history with it.
         findings.append(
             Finding(
                 "schema",
                 WARN,
-                f"{len(absent)} table(s) absent: {', '.join(absent)}. They are "
-                "recreated empty on the next open, so any history in them is lost.",
-                _resync_advice("Re-sync to refill them."),
+                f"{len(absent)} table(s) absent: {', '.join(absent)}. They are created "
+                "empty on the next open. If an older version last wrote this database, "
+                "they are tables this version added and nothing is lost; otherwise "
+                "whatever they held is gone.",
+                _resync_advice("Sync to fill them."),
             )
         )
     if not findings:
@@ -728,7 +733,12 @@ _ESTABLISHED_DAYS = 15
 #: guard alone already protects a sporadic weigher. What the exclusion buys is
 #: the daily weigher who goes on holiday; what it costs is that a broken
 #: weight sync is invisible here. The false positive was judged worse.
-_USER_LOGGED_TYPES = frozenset({"exercises", "food_log", "weight", "core_temperature"})
+#:
+#: `exercise_routes` follows `exercises`, one route per GPS workout, and
+#: `height` is logged a handful of times in a lifetime.
+_USER_LOGGED_TYPES = frozenset(
+    {"exercises", "exercise_routes", "food_log", "weight", "core_temperature", "height"}
+)
 
 
 def _never_filled_types(conn: sqlite3.Connection) -> set[str]:

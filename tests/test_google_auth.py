@@ -246,6 +246,17 @@ class TestWhatARefreshStores:
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert abs(stored["expires_at"] - (time.time() + config.GOOGLE_TOKEN_LIFETIME)) < 5
 
+    def test_a_forced_refresh_asks_even_while_the_token_is_valid(self, tmp_path):
+        """How a sync learns the scopes of a token from before they were recorded."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, expires_at=time.time() + 3600)
+        payload = {"access_token": "new", "scope": "granted"}
+        with patch("urllib.request.urlopen", return_value=self._respond(payload)) as request:
+            assert auth.refresh_google_token() == "stored-access"
+            assert not request.called
+            assert auth.refresh_google_token(force=True) == "new"
+        assert auth.granted_scopes() == "granted"
+
     def test_a_response_with_no_token_is_a_refusal(self, tmp_path):
         _write_client(tmp_path)
         _write_tokens(tmp_path)
@@ -285,6 +296,10 @@ class TestTheGrantedScopesAreRecorded:
     def test_a_consent_that_reports_none_records_none(self):
         """Unknown is not empty: an empty string would read as no permission at all."""
         assert "scope" not in auth._google_token_store({"access_token": "a"}, {})
+
+    def test_a_refresh_of_a_token_from_before_scopes_were_recorded_records_none(self):
+        store = auth._google_token_store({"access_token": "a"}, {"refresh_token": "r"})
+        assert "scope" not in store
 
     @pytest.mark.parametrize("value", [["a"], 7, None, True], ids=["list", "int", "null", "bool"])
     def test_an_unusable_one_keeps_the_stored_one(self, value):
@@ -342,23 +357,60 @@ class TestFinishingAConsent:
 
         assert self._finish(tmp_path, MagicMock(side_effect=api.HealthAPIError("net"))) == 0
 
+    def test_a_refused_check_does_not_blame_the_account(self, tmp_path, capsys):
+        """A grant without the settings scope is refused the device list; that
+        is a permission, not the wrong account."""
+        from google_health_mcp import api
+
+        code = self._finish(tmp_path, MagicMock(side_effect=api.HealthAuthError("403")))
+        assert code == 0
+        assert api.ACCOUNT_NOT_LINKED_MESSAGE not in capsys.readouterr().err
+
     def test_the_check_uses_the_token_just_saved(self, tmp_path):
         """A cached token from before the consent would check the old account."""
         auth._cached_google_tokens = {"access_token": "stale", "expires_at": 9e12}
-        seen = []
+        sent = []
 
-        def probe(*a, **k):
-            seen.append(auth._cached_google_tokens)
-            return {}
+        def urlopen(request, timeout=None):
+            sent.append(request.get_header("Authorization"))
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = b"{}"
+            return response
 
-        self._finish(tmp_path, probe)
-        assert seen == [None], "the in-memory token was not dropped before the check"
+        _write_client(tmp_path)
+        with patch("urllib.request.urlopen", urlopen):
+            auth._finish_consent(dict(self._RAW))
+        assert sent == ["Bearer a"]
 
-    def test_setup_hands_the_tokens_to_it(self):
-        """The one line joining the interactive flow to everything tested above."""
-        import inspect
+    def test_setup_hands_the_tokens_to_it(self, tmp_path):
+        """The one line joining the interactive flow to everything tested above,
+        driven through a callback carrying a code rather than read off the source."""
+        _write_client(tmp_path)
+        tokens = {"access_token": "a", "refresh_token": "r"}
 
-        assert "_finish_consent(" in inspect.getsource(auth.setup_google_auth)
+        class Server:
+            def __init__(self, address, handler):
+                self.handler = handler
+
+            def handle_request(self):
+                h = self.handler.__new__(self.handler)
+                h.path = "/?code=fake-code"
+                h._respond = lambda *a: None
+                h.do_GET()
+
+            def server_close(self):
+                pass
+
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(tokens).encode()
+        with (
+            patch.object(auth, "_CallbackServer", Server),
+            patch("webbrowser.open"),
+            patch("urllib.request.urlopen", return_value=response),
+            patch.object(auth, "_finish_consent") as finish,
+        ):
+            auth.setup_google_auth()
+        finish.assert_called_once_with(tokens)
 
 
 class TestTheAuthorisationUrl:

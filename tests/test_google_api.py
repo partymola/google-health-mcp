@@ -5,6 +5,7 @@ than an error - a page loop that stops early, a filter naming the wrong field,
 a response read under the wrong key, a page size the server silently truncates.
 """
 
+import http.client
 import itertools
 import json
 import urllib.error
@@ -365,14 +366,87 @@ class TestFailures:
             json.dumps({"error": {"status": "INVALID_ARGUMENT", "message": "bad filter"}}).encode(),
             b"<html>not json</html>",
             json.dumps({"error": {"details": "not-a-list"}}).encode(),
+            json.dumps(
+                {
+                    "error": {
+                        "status": "FAILED_PRECONDITION",
+                        "details": [{"reason": "SOMETHING_ELSE"}],
+                    }
+                }
+            ).encode(),
         ],
-        ids=["another-400", "unreadable", "malformed-details"],
+        ids=["another-400", "unreadable", "malformed-details", "another-reason"],
     )
     def test_any_other_400_stays_an_api_error(self, body):
         with patch("urllib.request.urlopen", side_effect=_http_error(400, body)):
             with pytest.raises(api.HealthAPIError) as caught:
                 api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
         assert not isinstance(caught.value, api.HealthAuthError)
+
+    def test_an_error_names_the_operation_and_never_a_resource_name(self):
+        """A resource name carries the account's user id, and this message is
+        written into sync_log and handed to the model."""
+        name = "users/1234567890123456789/dataTypes/exercise/dataPoints/42"
+        with patch("urllib.request.urlopen", side_effect=_http_error(404)):
+            with pytest.raises(api.HealthAPIError) as caught:
+                api.export_exercise_tcx(name)
+        assert "1234567890123456789" not in str(caught.value)
+        assert str(caught.value) == "API error 404 for exercise exportExerciseTcx"
+        assert not isinstance(caught.value, api.HealthNetworkError)
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            TimeoutError(),
+            urllib.error.URLError("no route"),
+            ConnectionResetError(),
+            http.client.IncompleteRead(b""),
+        ],
+        ids=["timeout", "unreachable", "reset", "cut-off"],
+    )
+    def test_a_request_with_no_answer_is_a_network_error(self, failure):
+        """The route sync leaves one workout's failure out and stops on this one."""
+        with patch("urllib.request.urlopen", side_effect=failure):
+            with pytest.raises(api.HealthNetworkError):
+                api.google_get("users/me/profile", {})
+
+    def test_a_response_cut_off_while_reading_is_a_network_error(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.side_effect = ConnectionResetError()
+        with patch("urllib.request.urlopen", return_value=response):
+            with pytest.raises(api.HealthNetworkError):
+                api.google_get("users/me/profile", {})
+
+    def test_a_504_outside_the_paging_loop_is_an_api_error(self):
+        """Otherwise run_sync reports it as an unexpected failure."""
+        with patch("urllib.request.urlopen", side_effect=_http_error(504)):
+            with pytest.raises(api.HealthAPIError) as caught:
+                api.google_get("users/me/profile", {})
+        assert not isinstance(caught.value, api.HealthNetworkError)
+
+    def test_a_list_error_names_its_data_type(self):
+        with patch("urllib.request.urlopen", side_effect=_http_error(500)):
+            with pytest.raises(api.HealthAPIError) as caught:
+                api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
+        assert str(caught.value) == "API error 500 for steps list"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "users/me/dataTypes/exercise/dataPoints/../../profile",
+            "users/me/dataTypes/exercise/dataPoints/1/../../../profile",
+            "x/users/me/dataTypes/exercise/dataPoints/1",
+            "users/../dataTypes/exercise/dataPoints/1",
+            "users/me/dataTypes/sleep/dataPoints/1",
+            "not-a-name",
+        ],
+    )
+    def test_an_export_is_asked_only_for_an_exercise_name(self, name):
+        """The name comes from a response and is used as a path with the token attached."""
+        with patch("urllib.request.urlopen") as request:
+            with pytest.raises(api.HealthAPIError):
+                api.export_exercise_tcx(name)
+        assert not request.called
 
     def test_an_unknown_data_type_is_refused_before_the_network(self):
         with patch("urllib.request.urlopen") as m:
@@ -408,7 +482,7 @@ class TestTheTokenLayerIsClassified:
     def test_a_network_failure_is_not_an_auth_failure(self, monkeypatch):
         from google_health_mcp import auth
 
-        with pytest.raises(api.HealthAPIError) as caught:
+        with pytest.raises(api.HealthNetworkError) as caught:
             self._list_with_refresh_raising(auth.RefreshNetworkError("no route"), monkeypatch)
         assert not isinstance(caught.value, api.HealthAuthError)
         assert str(caught.value) == "Network error. Check your connection."

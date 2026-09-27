@@ -259,7 +259,7 @@ def _classify_google_refusal(error: urllib.error.HTTPError) -> RuntimeError:
     return TokenRefused("Google refused the credentials. Run: google-health-mcp auth")
 
 
-def _refresh_google_token() -> str:
+def _refresh_google_token(force: bool = False) -> str:
     global _cached_google_tokens, _cached_google_client
 
     with _google_token_lock:
@@ -271,7 +271,7 @@ def _refresh_google_token() -> str:
         expires_at = _cached_google_tokens.get("expires_at", 0)
         if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
             expires_at = 0
-        if time.time() < expires_at - 300:
+        if not force and time.time() < expires_at - 300:
             return _cached_google_tokens["access_token"]
 
         if not _cached_google_tokens.get("refresh_token"):
@@ -314,8 +314,8 @@ def _refresh_google_token() -> str:
         return _cached_google_tokens["access_token"]
 
 
-def refresh_google_token() -> str:
-    """Return a valid Google access token, refreshing if expired.
+def refresh_google_token(force: bool = False) -> str:
+    """Return a valid Google access token, refreshing if expired or if `force`.
 
     Raises exactly two types, because `google_get` and doctor's grading both
     branch on which one it is: a credential the server refused, or anything
@@ -323,7 +323,7 @@ def refresh_google_token() -> str:
     unanticipated failure must land in the second by construction.
     """
     try:
-        return _refresh_google_token()
+        return _refresh_google_token(force)
     except (TokenRefused, RefreshNetworkError):
         raise
     except Exception as e:

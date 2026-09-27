@@ -5,7 +5,7 @@ from datetime import date
 import anyio
 
 from .. import db
-from ..helpers import format_response, require_auth
+from ..helpers import LIVE_HINT, format_response, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -23,8 +23,9 @@ async def health_get_profile(live: bool = False) -> str:
     Args:
         live: If true, re-fetch the records from the API before reading the cache.
 
-    Returns `profile`, `settings` and `irn_profile`, each null if never fetched,
-    and when each was fetched.
+    Returns `profile`, `settings` and `irn_profile`, and when each was fetched
+    (UTC). A record is null when it has never been fetched, which includes one
+    whose permission the grant lacks.
     """
     today = date.today()
     await anyio.to_thread.run_sync(lambda: refresh_before_query("account", today, today, live))
@@ -41,7 +42,7 @@ async def health_get_profile(live: bool = False) -> str:
         return format_response(
             {
                 "message": "No profile or settings have been fetched yet.",
-                "hint": "Try live=True to re-fetch them from the API.",
+                "hint": LIVE_HINT,
             }
         )
     response = {}

@@ -23,6 +23,23 @@ _NOT_A_DATA_TYPE = {
 }
 
 
+def _readers_in(tree) -> set[str]:
+    """Every data type a fetch under `tree` is given, plus the other calls."""
+    fetched = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        # Both spellings, or importing a function instead of reaching it
+        # through its module fails a test about scopes.
+        called = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        if called in _NOT_A_DATA_TYPE:
+            fetched.add(called)
+        first = node.args[0] if node.args else None
+        if called in FETCHERS and isinstance(first, ast.Constant):
+            fetched.add(first.value)
+    return fetched
+
+
 def _types_the_package_fetches() -> set[str]:
     """Every data type a fetch in the tools package is given, plus the device call.
 
@@ -33,18 +50,12 @@ def _types_the_package_fetches() -> set[str]:
     """
     fetched = set()
     for source in sorted(Path(google_sync.__file__).parent.glob("*.py")):
-        for node in ast.walk(ast.parse(source.read_text())):
-            if not isinstance(node, ast.Call):
-                continue
-            # Both spellings, or importing a function instead of reaching it
-            # through its module fails a test about scopes.
-            called = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
-            if called in _NOT_A_DATA_TYPE:
-                fetched.add(called)
-            first = node.args[0] if node.args else None
-            if called in FETCHERS and isinstance(first, ast.Constant):
-                fetched.add(first.value)
+        fetched |= _readers_in(ast.parse(source.read_text()))
     return fetched
+
+
+def _scope_of(reader: str) -> str:
+    return next(scope for scope, readers in _SCOPE_READERS.items() if reader in readers)
 
 
 class TestConfigDefaults:
@@ -118,6 +129,50 @@ class TestConfigDefaults:
         assert _types_the_package_fetches() == set(claimed), (
             "the types this package fetches and the types its scopes authorise have parted"
         )
+
+
+class TestEachHandlerIsGatedOnTheScopesItReads:
+    """A sync skips a type the grant cannot read, by what `HANDLER_SCOPES` says.
+
+    Nothing behavioural sees the map drift from the calls: a scope missing
+    from a handler's entry turns a skip back into a 403 on every upgraded
+    install, and a spare one skips a type the grant could have read. So each
+    entry is held equal to the scopes of the readers its handler calls.
+    """
+
+    def _functions(self):
+        tree = ast.parse(Path(google_sync.__file__).read_text())
+        return {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}, tree
+
+    def test_every_handler_has_an_entry(self):
+        assert set(google_sync.HANDLER_SCOPES) == set(google_sync.GOOGLE_SYNC_HANDLERS)
+
+    def test_each_entry_is_the_scopes_its_handler_reads(self):
+        functions, _ = self._functions()
+        for dtype, handler in google_sync.GOOGLE_SYNC_HANDLERS.items():
+            if dtype == "account":
+                continue
+            readers = _readers_in(functions[handler.__name__])
+            assert readers, f"{dtype}: no reader found in {handler.__name__}"
+            assert set(google_sync.HANDLER_SCOPES[dtype]) == {_scope_of(r) for r in readers}, dtype
+
+    def test_the_account_records_are_gated_one_by_one(self):
+        """The account's records sit under three scopes, one of them new, so
+        the handler gates each record rather than the type."""
+        assert google_sync.HANDLER_SCOPES["account"] == ()
+        _, tree = self._functions()
+        (table,) = [
+            n.value
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and any(getattr(t, "id", None) == "_ACCOUNT_RECORDS" for t in n.targets)
+        ]
+        functions, _ = self._functions()
+        assert _readers_in(functions["sync_account"]) == set(), "a fetch outside the table"
+        for record in table.elts:
+            _resource, scope, fetch = record.elts
+            (reader,) = _readers_in(fetch)
+            assert scope.value == _scope_of(reader), reader
 
 
 class TestMissingScopes:

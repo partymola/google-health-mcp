@@ -35,6 +35,20 @@ def _no_real_credentials(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_cache(tmp_path_factory, monkeypatch):
+    """No test opens the developer's own cache.
+
+    `db` binds `DB_PATH` at import, and two paths reach it without being
+    handed one: `auto_sync_if_stale` opens it through `get_db()`, and every
+    tool response asks it which scopes the grant lacks. A per-test patch
+    covered the first by convention, which a new tool test could forget; the
+    second made the suite's answers depend on what that machine's cache held.
+    A test wanting a particular database patches `db.DB_PATH` itself.
+    """
+    monkeypatch.setattr(db, "DB_PATH", tmp_path_factory.mktemp("cache") / "google_health.db")
+
+
+@pytest.fixture(autouse=True)
 def _no_network(monkeypatch):
     """Refuse a real request, as a backstop to the fixture above.
 

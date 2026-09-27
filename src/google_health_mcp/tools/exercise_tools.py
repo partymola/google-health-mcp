@@ -76,15 +76,17 @@ async def health_get_exercises(
 async def health_get_exercise_route(log_id: str, include_tcx: bool = False) -> str:
     """Get the GPS route of one exercise, as the TCX file Google exports.
 
-    Only exercises recorded with GPS have a route. The TCX text carries every
-    trackpoint (time, position, altitude, distance, heart rate) and runs to
-    around half a megabyte, so it is returned only when asked for.
+    Only exercises recorded with GPS have a route, and a sync fetches routes
+    for the workouts in its own window. The TCX text carries every trackpoint
+    (time, position, altitude, distance, heart rate) and can run to hundreds of
+    kilobytes, so it is returned only when asked for.
 
     Args:
         log_id: The exercise's `log_id`, as health_get_exercises returns it.
         include_tcx: If true, include the TCX text itself.
 
-    Returns the exercise's log_id and date, and the TCX text when asked for.
+    Returns the exercise's log_id, date and provider, and the TCX text when
+    asked for.
     """
     today = date.today()
     await anyio.to_thread.run_sync(
@@ -102,8 +104,14 @@ async def health_get_exercise_route(log_id: str, include_tcx: bool = False) -> s
     if route is None:
         return format_response(
             {
-                "message": f"No route is held for exercise '{log_id}'.",
-                "hint": "Only exercises recorded with GPS have one.",
+                "message": f"No route for exercise '{log_id}' is in the cache.",
+                "hint": (
+                    "Only exercises recorded with GPS have one, and none is fetched for "
+                    "a day whose workouts came from an import. A sync fetches routes "
+                    "from its own window, so an older one needs a sync of "
+                    "exercise_routes with since set before its date, on the host "
+                    "that syncs."
+                ),
             }
         )
     tcx = route.pop("tcx")

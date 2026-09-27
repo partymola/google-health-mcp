@@ -69,7 +69,7 @@ async def health_get_height(
         end_date: End date as "YYYY-MM-DD". Default: today.
         live: If true, re-fetch height from the API before reading the cache.
 
-    Returns one entry per reading with datetime, date and height_mm.
+    Returns one entry per reading with datetime, date, height_mm and provider.
     """
     start, end = parse_date(start_date, end_date, default_days=3653)
 

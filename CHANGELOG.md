@@ -11,18 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `health_get_profile` returns your profile (age, membership start, stride lengths), settings (units, time zone, locale) and irregular-rhythm enrolment, each as the record Google returns.
 - `health_get_height` returns height readings, in millimetres as Google reports them. Every sync reads the whole height history, since a single reading from years back is the usual case.
-- `health_get_exercise_route` returns a workout's GPS route as the TCX file Google exports. Only workouts recorded with GPS have one, and the text, around half a megabyte, travels only when asked for with `include_tcx`.
-- When your authorisation lacks a permission this version reads, every tool response carries an `authorisation` note naming it and the fix, `doctor` reports it under the new check `missing-scopes`, and `sync` prints it. The note comes from the shared database, so a cache-only host with no token carries it too.
-- `auth` checks the account you consented with. Choosing a Google account that holds no health data produces a grant that works and reads nothing; `auth` now says so and exits 1, and a sync or query answered that way says to authorise again with the right account instead of reporting a bare `API error 400`.
+- `health_get_exercise_route` returns a workout's GPS route as the TCX file Google exports. Only workouts recorded with GPS have one. The TCX text is returned only with `include_tcx`. Days whose workouts came from an import are left out, since the workouts listed for them carry the import's ids and a route could not be looked up.
+- `sync --types` and `health_sync` accept three new types: `account` (profile, settings and enrolment), `height` and `exercise_routes`. A first sync of routes covers the last 30 days (or `--days`), so fetch older ones with `sync --types exercise_routes --since <date>`. One workout whose export fails is left out and logged rather than failing the type, so it cannot fail every run; a later sync asks again only while that workout is inside its window, so an older one needs `--since`. No answer from Google, a refusal or a rate limit still fails the type.
+- When your authorisation lacks a permission this version reads, every successful tool response carries an `authorisation` note naming it and the fix, `doctor` reports it under the new check `missing-scopes`, and `sync` prints it. The note comes from the shared database, so a cache-only host with no token carries it too.
+- `auth` checks the account you consented with. Choosing a Google account that is not linked to Google Health produces a grant that authorises but reads nothing; `auth` now says so and exits 1, and `sync` and `health_sync` say to authorise again with the right account instead of reporting a bare `API error 400`.
 
 ### Changed
 
-- Two more read-only scopes are requested: `profile.readonly` and `location.readonly`, the second for workout routes. **Run `google-health-mcp auth` again** to grant them; until you do, everything else keeps syncing and the `authorisation` note names what is missing.
-- The token file now also records the scopes Google reports granting.
+- Two more read-only scopes are requested: `profile.readonly` and `location.readonly`, the second for workout routes. **Tick both on your project's Data Access page, then run `google-health-mcp auth` again** to grant them, and `google-health-mcp sync` to fetch the new data straight away rather than on tomorrow's first query. Until you do, the data types that need them are skipped rather than failed, so `sync` still exits 0, everything else keeps syncing, and the `authorisation` note names what is missing.
+- A data type whose permission the grant lacks is now skipped by every sync, recorded as `skipped` in the sync log rather than as an error.
+- A 504 from Google outside a paged listing is reported as an API error rather than as an unexpected failure, and so is a connection reset or a response cut off mid-read, which is reported as a network error.
+- The token file now also records the scopes Google reports granting. A token from before this release records none, so the first sync after upgrading refreshes it once to learn them before fetching anything.
+- **On a multi-host setup, upgrade the syncing host first and let it sync once before upgrading the cache-only hosts.** This release adds tables, and whichever host opens the database first with the new version creates them.
 
 ### Fixed
 
 - `health_get_spo2` and `health_trends` no longer tell the model that an imported night's `min`/`max` and a synced night's `avg_ci_low`/`avg_ci_high` are different measurements that must never be combined. On the history checked, the imported pair matched Google's bounds on every night carrying both. Stored data and responses are unchanged.
+- `doctor` no longer tells an upgraded install that the tables this version added have lost their history. A database an older release last wrote simply lacks them, and nothing is lost.
 
 ## 1.5.0 - 2026-09-06
 

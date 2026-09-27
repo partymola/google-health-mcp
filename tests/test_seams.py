@@ -99,10 +99,10 @@ def test_every_test_agents_md_names_exists():
 def test_the_readme_scope_table_is_the_scopes_that_are_requested():
     """A scope table nobody generates drifts from the constant it describes.
 
-    It told readers to tick `profile.readonly` for a fortnight after that
-    scope was dropped from GOOGLE_SCOPES, and a reader who ticks fewer than
-    the code asks for gets a 403 at the first request rather than at consent.
-    The table and the paragraph naming what this package declines are read
+    A reader who ticks fewer scopes than the code asks for finds the types
+    under them skipped on every sync, and one who ticks more grants a
+    permission nothing uses. The table and the paragraph naming what this
+    package declines are read
     separately, because they make opposite claims about the same constant.
     """
     from google_health_mcp.config import GOOGLE_SCOPES
@@ -139,8 +139,8 @@ def test_every_data_type_a_fetch_names_is_one_the_api_has():
     Every normaliser test mocks the client, so the path travels no further
     than the mock: replacing `"sleep"` with a type that does not exist leaves
     every behavioural test green while the real sync 404s and that table stops
-    filling. The scope test catches it too, but only where `_SCOPE_READERS` is
-    not edited to match; this one fires either way.
+    filling. The scope test catches it too, but only where
+    `GOOGLE_SCOPE_READERS` is not edited to match; this one fires either way.
 
     Scans the whole tools package rather than `google_sync.py` alone, so that
     it and the scope test read the same calls - a fetch added elsewhere would
@@ -468,9 +468,9 @@ class TestTheMigrationLockstep:
     ):
         """A helper running its own statement keeps the old behaviour unnoticed.
 
-        Only five of the twelve upserted tables have a preservation test, so
-        reverting one of the other seven passes the whole suite while its
-        _UPSERT_KEYS entry stays and means nothing.
+        Most upserted tables have no preservation test, so reverting one of
+        them passes the whole suite while its _UPSERT_KEYS entry stays and
+        means nothing.
 
         With _upsert stubbed out, a row that still lands in the table was
         written some other way. Asking what reached the database rather than
@@ -615,6 +615,13 @@ def test_the_suite_cannot_see_real_credentials():
     assert helpers.GOOGLE_TOKENS_PATH.parent != config.CONFIG_DIR
     assert not helpers.GOOGLE_TOKENS_PATH.exists()
     assert not helpers.GOOGLE_CLIENT_PATH.exists()
+
+
+def test_the_suite_cannot_see_the_real_cache():
+    """Every tool response reads `db.DB_PATH`, so an unpatched one makes a
+    test's answer depend on what the machine's own cache holds."""
+    assert db.DB_PATH != config.DB_PATH
+    assert not db.DB_PATH.exists()
 
 
 #: Exceptions deliberately left for `mcp` to mask, named so that leaving the

@@ -9,9 +9,9 @@ holds for them.
 
 import json
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from .. import api, db
+from .. import api, auth, config, db
 
 logger = logging.getLogger(__name__)
 
@@ -755,21 +755,42 @@ def sync_food_log(conn, start, end) -> int:
     return count
 
 
+#: Each account record, the scope it is read under, and its fetch.
+_ACCOUNT_RECORDS = (
+    ("profile", "profile", lambda: api.get_profile()),
+    ("settings", "settings", lambda: api.get_settings()),
+    ("irn_profile", "irn", lambda: api.get_irn_profile()),
+)
+
+
 def sync_account(conn, start, end) -> int:
     """The profile, settings and irregular-rhythm enrolment, as Google sent them.
 
     Records of the account rather than dated series, so the window does not
     apply: each run stores the current record whole. An empty answer writes
     nothing rather than a record of nothing.
+
+    Gated per record rather than per type, because the three sit under
+    different scopes: a grant lacking one still stores the other two. A
+    record that fails is re-raised once the rest are stored, so the type
+    fails; unlike a route, these are three fixed records, and one that keeps
+    failing is worth seeing. No answer or a rate limit stops at once, since
+    the next record would fare the same.
     """
-    records = {
-        "profile": api.get_profile(),
-        "settings": api.get_settings(),
-        "irn_profile": api.get_irn_profile(),
-    }
-    fetched_at = datetime.now().astimezone().isoformat()
+    missing = set(config.missing_scopes(auth.granted_scopes()) or ())
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    refused = None
     count = 0
-    for resource, body in records.items():
+    for resource, scope, fetch in _ACCOUNT_RECORDS:
+        if scope in missing or scope not in config.GOOGLE_SCOPE_READERS:
+            continue
+        try:
+            body = fetch()
+        except (api.HealthNetworkError, api.HealthRateLimitError):
+            raise
+        except (api.HealthAuthError, api.HealthAPIError) as e:
+            refused = refused or e
+            continue
         if not isinstance(body, dict) or not body:
             continue
         db.save_account(
@@ -783,6 +804,8 @@ def sync_account(conn, start, end) -> int:
         )
         count += 1
     conn.commit()
+    if refused is not None:
+        raise refused
     return count
 
 
@@ -817,32 +840,47 @@ def sync_exercise_routes(conn, start, end) -> int:
 
     Only an exercise Google marks `hasGps` is exported: without GPS the export
     is an empty activity. A route already held is not fetched again, since a
-    recorded route does not change and each one is around half a megabyte.
+    recorded route does not change and one can run to hundreds of kilobytes.
+
+    A day whose workouts `sync_exercises` leaves to another provider is left
+    here too: the workout listed for it carries that provider's id, so a
+    route stored under Google's would be one nothing can look up.
+
+    One workout whose export fails is left out and logged, so it cannot fail
+    the type on every run; a later sync asks again while the workout is still
+    inside its window. No answer at all, a refusal or a rate limit fails the
+    type, since each says the next export would fare the same.
     """
     held = db.route_ids(conn)
+    covered = _days_another_provider_recorded(conn)
+    failed = 0
     count = 0
     for point in api.list_google_data_points("exercise", *_window(start, end)):
         payload = point.get("exercise")
         identifier = point.get("name")
-        if not isinstance(payload, dict) or not identifier or identifier in held:
+        if not isinstance(payload, dict) or not isinstance(identifier, str) or identifier in held:
             continue
-        if not (payload.get("exerciseMetadata") or {}).get("hasGps"):
+        metadata = payload.get("exerciseMetadata")
+        if not isinstance(metadata, dict) or metadata.get("hasGps") is not True:
             continue
         interval = payload.get("interval") or {}
         day = _local_date(interval.get("startTime"), interval.get("startUtcOffset"))
-        if day is None:
+        if day is None or day in covered:
+            continue
+        try:
+            tcx = api.export_exercise_tcx(identifier)
+        except api.HealthNetworkError:
+            raise
+        except api.HealthAPIError:
+            failed += 1
             continue
         db.save_exercise_route(
-            conn,
-            {
-                "log_id": identifier,
-                "date": day,
-                "tcx": api.export_exercise_tcx(identifier),
-                "provider": PROVIDER,
-            },
+            conn, {"log_id": identifier, "date": day, "tcx": tcx, "provider": PROVIDER}
         )
         count += 1
     conn.commit()
+    if failed:
+        logger.info("%d route export(s) failed and were not stored", failed)
     return count
 
 
@@ -868,4 +906,31 @@ GOOGLE_SYNC_HANDLERS = {
     "account": sync_account,
     "height": sync_height,
     "exercise_routes": sync_exercise_routes,
+}
+
+_METRICS = ("health_metrics_and_measurements",)
+_ACTIVITY = ("activity_and_fitness",)
+
+#: The scopes each handler reads under, so a sync skips a type the grant
+#: cannot read rather than failing it on a 403 every run until the person
+#: consents again. `account` gates its records one by one instead.
+HANDLER_SCOPES = {
+    "heart_rate": _METRICS,
+    "spo2": _METRICS,
+    "hrv": _METRICS,
+    "breathing_rate": _METRICS,
+    "skin_temperature": _METRICS,
+    "activity": _ACTIVITY,
+    "azm": _ACTIVITY,
+    "sleep": ("sleep",),
+    "weight": _METRICS,
+    "core_temperature": _METRICS,
+    "exercises": _ACTIVITY,
+    "ecg": ("ecg",),
+    "irn": ("irn",),
+    "cardio_fitness": _METRICS,
+    "food_log": ("nutrition",),
+    "account": (),
+    "height": _METRICS,
+    "exercise_routes": ("activity_and_fitness", "location"),
 }

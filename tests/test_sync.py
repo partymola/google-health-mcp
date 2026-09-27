@@ -321,6 +321,17 @@ class TestWhatAllMeans:
 
         assert asked == ["sleep", "hrv"]
 
+    def test_the_docstring_offers_every_type_and_no_other(self):
+        """The model reads this list before choosing a type, and a type left
+        off it is one it will not think to ask for."""
+        from google_health_mcp.tools import sync_tools
+        from google_health_mcp.tools.google_sync import GOOGLE_SYNC_HANDLERS
+        from tests.test_argument_validation import documented_values
+
+        offered = documented_values("data_types", sync_tools.health_sync.__doc__)
+        offered = {v for v in offered if v != "all" and "," not in v}
+        assert offered == set(GOOGLE_SYNC_HANDLERS)
+
 
 class TestAutoSyncOffline:
     """auto_sync_if_stale respects offline / cache-only mode."""

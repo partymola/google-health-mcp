@@ -454,12 +454,12 @@ def recorded_missing_scopes(path: Path | str | None = None) -> list[str] | None:
     record existed, or an unreadable value all answer "unknown".
     """
     path = Path(path) if path is not None else DB_PATH
-    if not path.is_file():
-        return None
     try:
+        if not path.is_file():
+            return None
         with open_readonly(path) as conn:
             row = conn.execute("SELECT missing_scopes FROM authorisation WHERE id = 1").fetchone()
-    except sqlite3.DatabaseError:
+    except (sqlite3.DatabaseError, OSError):
         return None
     value = _decoded(row[0]) if row else None
     if isinstance(value, list) and all(isinstance(name, str) for name in value):
@@ -515,9 +515,14 @@ _DATA_TABLE_MAP: dict[str, str] = {
 
 
 def get_last_sync_time(conn: sqlite3.Connection, data_type: str) -> datetime | None:
-    """Return the timestamp of the most recent successful sync for a data type."""
+    """Return when a data type last synced, or was skipped for a missing scope.
+
+    A skip counts, or each query of a type the grant cannot read re-runs a
+    sync that can only skip it again and adds a row saying so.
+    """
     row = conn.execute(
-        "SELECT MAX(synced_at) AS t FROM sync_log WHERE data_type = ? AND status = 'ok'",
+        "SELECT MAX(synced_at) AS t FROM sync_log "
+        "WHERE data_type = ? AND status IN ('ok', 'skipped')",
         (data_type,),
     ).fetchone()
     if row and row["t"]:

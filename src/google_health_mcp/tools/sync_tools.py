@@ -9,7 +9,7 @@ from .. import api, auth, config, db
 from ..errors import LiveRefreshFailed
 from ..helpers import format_response, require_auth
 from ..mcp_instance import mcp
-from .google_sync import GOOGLE_SYNC_HANDLERS
+from .google_sync import GOOGLE_SYNC_HANDLERS, HANDLER_SCOPES
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,16 @@ def run_sync(
 
 
 def _run_sync_types(conn, data_types, results, since_date, until_date, today, days, handlers):
+    # A token from before scopes were recorded says nothing until its next
+    # refresh, so one is asked for now; otherwise the first sync after an
+    # upgrade fetches what the grant lacks and fails on the 403. If it cannot
+    # be had, unknown is treated as held and everything is fetched as before.
+    if not config.OFFLINE_MODE and auth.granted_scopes() is None:
+        try:
+            auth.refresh_google_token(force=True)
+        except (auth.TokenRefused, auth.RefreshNetworkError):
+            pass
+    missing = set(config.missing_scopes(auth.granted_scopes()) or ())
     for dtype in data_types:
         try:
             if since_date is not None:
@@ -135,6 +145,31 @@ def _run_sync_types(conn, data_types, results, since_date, until_date, today, da
             if handler is None:
                 results[dtype] = {"status": "error", "message": f"Unknown type: {dtype}"}
                 continue
+            # A scope trimmed out of the request is never granted either.
+            lacking = [
+                s
+                for s in HANDLER_SCOPES.get(dtype, ())
+                if s in missing or s not in config.GOOGLE_SCOPE_READERS
+            ]
+            if lacking:
+                # Neither a failure nor a success: `sync` exits 0 and doctor's
+                # sync-log check passes, while the missing-scope note warns.
+                ungranted = [s for s in lacking if s in config.GOOGLE_SCOPE_READERS]
+                unrequested = [s for s in lacking if s not in config.GOOGLE_SCOPE_READERS]
+                reasons = []
+                if ungranted:
+                    reasons.append(
+                        f"permission not granted ({', '.join(ungranted)}); "
+                        "run google-health-mcp auth"
+                    )
+                if unrequested:
+                    reasons.append(
+                        f"permission not requested by this install ({', '.join(unrequested)})"
+                    )
+                message = "; ".join(reasons)
+                db.log_sync(conn, dtype, "skipped", notes=message)
+                results[dtype] = {"status": "skipped", "message": message}
+                continue
             count = handler(conn, start_date, end_date)
 
             db.log_sync(conn, dtype, "ok", count, last_date_attempted=end_date.isoformat())
@@ -164,9 +199,12 @@ def _run_sync_types(conn, data_types, results, since_date, until_date, today, da
             results[dtype] = {"status": "error", "message": "Unexpected error during sync."}
 
     # After the types rather than before: a refresh during them is what brings
-    # the token's record of its scopes up to date.
+    # the token's record of its scopes up to date. An unreadable token leaves
+    # the record alone rather than erasing a shortfall every host reports.
     try:
-        db.record_missing_scopes(conn, config.missing_scopes(auth.granted_scopes()))
+        found = config.missing_scopes(auth.granted_scopes())
+        if found is not None:
+            db.record_missing_scopes(conn, found)
     except Exception:
         logger.error("Could not record the grant's missing scopes")
     return results
@@ -246,7 +284,8 @@ async def health_sync(
         data_types: What to sync. Options: "all", "heart_rate", "activity",
             "exercises", "sleep", "weight", "spo2", "hrv", "azm",
             "breathing_rate", "skin_temperature", "core_temperature",
-            "cardio_fitness", "food_log", "ecg", "irn".
+            "cardio_fitness", "food_log", "ecg", "irn", "account", "height",
+            "exercise_routes".
             Comma-separated for multiple, e.g. "sleep,hrv". Default: "all".
         days: Days of history for first sync (default: 30). Ignored
             on subsequent syncs (uses last synced date).

@@ -774,6 +774,22 @@ def test_absent_tables_are_reported_without_claiming_the_schema_matches(setup_pa
     assert schema and all(f.severity != doctor.OK for f in schema)
 
 
+def test_tables_a_newer_version_added_are_not_called_lost_history(setup_paths):
+    """A database an older release wrote lacks every table added since, which
+    is what upgrading looks like; saying its history is gone is false."""
+    _config_dir, db_path = setup_paths
+    db_path.parent.mkdir(parents=True)
+    conn = db.get_db(db_path)
+    conn.execute("DROP TABLE exercise_routes")
+    conn.commit()
+    conn.close()
+
+    (finding,) = [f for f in doctor.run_checks() if f.name == "schema"]
+    assert finding.severity == doctor.WARN
+    assert "nothing is lost" in finding.detail
+    assert "history in them is lost" not in finding.detail
+
+
 def test_read_only_open_handles_a_non_utf8_path(tmp_path):
     """Such a name reaches Python as surrogate escapes, which `quote` refuses.
 
@@ -1273,6 +1289,23 @@ class TestASeriesThatHasStopped:
         assert not [f for f in doctor.run_checks() if "food_log" in f.detail], (
             "a logging habit that ended was reported as a fault"
         )
+
+    @pytest.mark.parametrize("table", ["exercise_routes", "height"])
+    def test_routes_and_height_follow_what_a_person_does(self, setup_paths, table):
+        """A route exists only for a GPS workout, and height is logged rarely."""
+        _config_dir, db_path = setup_paths
+        db_path.parent.mkdir(parents=True)
+        conn = db.get_db(db_path)
+        for i, day in enumerate(self._days(0, 30)):
+            if table == "height":
+                db.save_height(conn, {"datetime": f"{day}T00:00:00", "date": day, "height_mm": 1})
+            else:
+                db.save_exercise_route(conn, {"log_id": f"ex/{i}", "date": day, "tcx": "x"})
+        self._fill(conn, "sleep", self._days(0, 50), total_minutes=420)
+        conn.commit()
+        conn.close()
+
+        assert not [f for f in doctor.run_checks() if f.check == doctor.STOPPED_SERIES]
 
     def test_a_last_row_on_the_first_day_of_the_recent_window_is_not_reported(self, setup_paths):
         """The boundary: the recent window includes its own first day."""

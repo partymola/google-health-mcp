@@ -37,13 +37,14 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 # name. Never a writeonly scope.
 #
 # A grant does not gain scopes on refresh, so a scope left out costs every
-# user a second consent - but a scope with no reader is a permission granted
-# for nothing, and `test_no_scope_is_asked_for_that_nothing_reads` holds this
-# map equal to what the package actually fetches, in both directions.
+# user a second consent. A scope with no reader is a permission granted for
+# nothing, and `test_no_scope_is_asked_for_that_nothing_reads` holds this map
+# equal to what the package actually fetches, in both directions.
 #
-# Google publishes a category per scope and no per-type mapping, so which
-# scope a type sits under is ours. The scope lists in the developer docs and
-# in the discovery document are both incomplete; check the Cloud console.
+# Google publishes a category per scope and no per-type mapping, so the
+# placement here is inferred from those categories, and a wrong one answers
+# 403. The scope lists in the developer docs and in the discovery document are
+# both incomplete; check the Cloud console.
 GOOGLE_SCOPE_READERS: dict[str, tuple[str, ...]] = {
     "activity_and_fitness": (
         "steps",

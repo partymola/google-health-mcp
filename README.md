@@ -94,6 +94,8 @@ google-health-mcp auth
 
 Your browser will warn that **Google hasn't verified this app**. That is expected, and the app is your own: these health scopes are classified restricted, and verification only matters above 100 users. Click **Advanced**, then **Go to google-health-mcp (unsafe)**, and grant the scopes.
 
+If you have more than one Google account, pick the one your health data is in. `auth` checks the account once the tokens are saved, and if Google reports it is not linked to Google Health, it says so and exits 1; run it again and choose the other account.
+
 The flow listens on `localhost:8081` for the callback, so that port must be free. It saves tokens to `~/.config/google-health-mcp/google_tokens.json`, created 0600 on POSIX. Windows keeps only the owner-write bit, as its read-only attribute, and governs access by ACLs - so there the file is not restricted to your account, and what it grants is whatever its directory's ACLs pass down. Access tokens last an hour and refresh automatically. Refresh tokens do not rotate, so a token minted on a machine with a browser can be copied to a headless one.
 
 **If you authorised before publishing the app**, re-run `google-health-mcp auth` afterwards: publishing does not extend a token already granted, and that one still expires after seven days.
@@ -114,7 +116,7 @@ google-health-mcp doctor
 
 Worth running before step 3 (Authorise) as well as after: it reports whether port 8081 can be bound and whether this host can open a browser, which are the two ways `auth` fails before it starts.
 
-Offline and read-only: it reports which paths resolved where, whether the credential files are the right shape, whether the token is short-lived, and whether the cache is being kept up to date.
+Offline and read-only: it reports which paths resolved where, whether the credential files are the right shape, whether the token is short-lived, whether the grant holds every permission this version reads, and whether the cache is being kept up to date.
 
 `doctor --json` reports the same findings for a monitor to act on:
 
@@ -184,17 +186,21 @@ Query tools sync on the first query of each day per data type, then read the cac
 
 All query tools except `health_get_devices`, `health_get_lifetime_stats`, `health_get_profile` and `health_get_exercise_route` accept:
 
-- `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: last 30 days.
+- `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: last 30 days, except `health_get_height`, whose default is the last ten years.
 - `end_date` - `YYYY-MM-DD`. Default: today.
 - `live` - if true, re-fetch this window from the API before reading the cache. A failed refresh is reported rather than silently answered from the cache.
 
-`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead. `health_get_exercise_route` takes a workout's `log_id` and `include_tcx`, for the same reason: a route is around half a megabyte of trackpoints, and only workouts recorded with GPS have one.
+`health_get_profile` takes only `live`.
 
-**If your authorisation lacks a permission this version reads**, every tool response carries an `authorisation` note naming it, `doctor` reports it under the check `missing-scopes`, and `sync` prints it. A grant does not gain permissions on refresh, so this is what an upgrade that adds one looks like until you run `google-health-mcp auth` again.
+`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead.
+
+`health_get_exercise_route` takes a workout's `log_id`. The route text comes back only with `include_tcx`, since it can run to hundreds of kilobytes. Only workouts recorded with GPS have a route, and a sync fetches routes for the workouts in its own window, so an older one needs `health_sync` with `data_types="exercise_routes"` and `since`. A route holds every position you recorded, start and end included: it is cached on disk like the rest, and reaches the model only when `include_tcx` is set.
+
+**If your authorisation lacks a permission this version reads**, every successful tool response carries an `authorisation` note naming it, `doctor` reports it under the check `missing-scopes`, and `sync` prints it. The data types read under it are skipped rather than failed, so `sync` still exits 0. A grant does not gain permissions on refresh, so this is what an upgrade that adds one looks like until you run `google-health-mcp auth` again. `doctor` on the syncing host sees the new grant straight away; the tool note, and `doctor` on a cache-only host, catch up once the next sync has run. Run `google-health-mcp sync` after authorising to fetch the newly granted data at once; a query tool otherwise waits for the next day, since a skipped type counts as synced for that day.
 
 ### health_sync
 
-- `data_types` - `all`, or a comma-separated subset of the names listed under [CLI usage](#cli-usage) above (`irn` is the irregular-rhythm notifications). Default: `all`.
+- `data_types` - `all`, or a comma-separated subset of the names listed under [CLI usage](#cli-usage) above (`irn` is the irregular-rhythm notifications, and `account` is the profile, settings and irregular-rhythm enrolment). Default: `all`.
 - `days` - days of history for a first sync (default: 30). Later syncs are incremental.
 - `since` / `until` - fetch an exact window regardless of what is cached.
 
@@ -223,9 +229,9 @@ Tick these read-only scopes on the Data Access page. All are under `https://www.
 | `profile.readonly` | Age, membership start, stride lengths |
 | `location.readonly` | GPS routes of workouts |
 
-`reproductive_health.readonly`, `logged_symptoms.readonly` and `mindfulness.readonly` are offered by the console and this package does not request them. The cycle, ovulation-test, symptom and mood data types answer a read with "supported: create, update, batchDelete", and the API has no mindfulness data type at all, so there is nothing to read under them.
+The console also offers `reproductive_health.readonly`, `logged_symptoms.readonly` and `mindfulness.readonly`, which this package does not request. As of September 2026 the cycle, ovulation-test, symptom and mood data types can be written but not read, and the API has no mindfulness data type, so there is nothing to read under them.
 
-**Read the list off the console, not off the published scope page** - read-only scopes exist that appear in neither Google's documentation nor the API's own discovery document, and the discovery document omits `nutrition.readonly` outright. To request fewer, tick fewer on the Data Access page and remove them from `GOOGLE_SCOPE_READERS` in `config.py` before authorising, which needs a source checkout rather than a `pip` or `uvx` install; the data under a scope you leave out will not sync. A grant does not gain scopes on refresh, so widening the list later means running `auth` again.
+**Read the list off the console, not off the published scope page** - read-only scopes exist that appear in neither Google's documentation nor the API's own discovery document, and the discovery document omits `nutrition.readonly` outright. To request fewer, tick fewer on the Data Access page and remove them from `GOOGLE_SCOPE_READERS` in `config.py` before authorising, which needs a source checkout rather than a `pip` or `uvx` install; the data types under a scope you leave out are skipped by every sync. A grant does not gain scopes on refresh, so widening the list later means running `auth` again.
 
 ## Configuration
 

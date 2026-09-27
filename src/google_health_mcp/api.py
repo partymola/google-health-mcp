@@ -13,8 +13,10 @@ second for an unverified one - which is every install of this, since the
 three-year backfill of every type is around 250 requests.
 """
 
+import http.client
 import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.request
@@ -34,17 +36,18 @@ class HealthAuthError(GoogleHealthError):
 
 
 ACCOUNT_NOT_LINKED_MESSAGE = (
-    "The Google account this server is authorised as has no Google Health data. "
-    "Run: google-health-mcp auth, and choose the account your health data is in."
+    "The Google account this server is authorised as is not linked to Google Health. "
+    "Run: google-health-mcp auth; if you have more than one Google account, choose "
+    "the one your health data is in."
 )
 
 
 class AccountNotLinked(HealthAuthError):
-    """The grant belongs to a Google account with no health data linked.
+    """The grant belongs to a Google account that is not linked to Google Health.
 
     Google answers every request with 400 `FAILED_PRECONDITION`, reason
-    `ACCOUNT_NOT_LINKED` - the result of picking the wrong account on the
-    consent screen, which only re-authorising fixes.
+    `ACCOUNT_NOT_LINKED`. Picking the wrong account on the consent screen is
+    the cause measured here, and re-authorising is the fix for it.
     """
 
 
@@ -100,6 +103,10 @@ def _reset_seconds(error) -> int:
 
 class HealthAPIError(GoogleHealthError):
     """General API error."""
+
+
+class HealthNetworkError(HealthAPIError):
+    """No answer from Google at all, so the next request would fare the same."""
 
 
 # --- Google Health API ---
@@ -272,6 +279,17 @@ def _classify_google_api_error(error: urllib.error.HTTPError):
     )
 
 
+def _operation(path: str) -> str:
+    """What a request was for, fit for a message: a data type and method, never a
+    resource name, since those carry the account's user id."""
+    parts = path.split("/")
+    if "dataTypes" in parts and parts.index("dataTypes") + 1 < len(parts):
+        data_type = parts[parts.index("dataTypes") + 1]
+        method = parts[-1].rsplit(":", 1)[1] if ":" in parts[-1] else "list"
+        return f"{data_type} {method}"
+    return parts[-1]
+
+
 def _is_account_not_linked(error: urllib.error.HTTPError) -> bool:
     """Whether a 400 carries Google's ACCOUNT_NOT_LINKED reason. Reads, never quotes."""
     try:
@@ -305,7 +323,7 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
             "Could not obtain an access token. Run: google-health-mcp auth"
         ) from e
     except RefreshNetworkError as e:
-        raise HealthAPIError("Network error. Check your connection.") from e
+        raise HealthNetworkError("Network error. Check your connection.") from e
 
     url = f"{config.GOOGLE_API_BASE}/{path}"
     if params:
@@ -328,9 +346,12 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
             raise GoogleGatewayTimeout("Google timed out serving the request.") from e
         if e.code == 400 and _is_account_not_linked(e):
             raise AccountNotLinked(ACCOUNT_NOT_LINKED_MESSAGE) from e
-        raise HealthAPIError(f"API error {e.code} for {path}") from e
-    except (TimeoutError, urllib.error.URLError) as e:
-        raise HealthAPIError("Network error. Check your connection.") from e
+        raise HealthAPIError(f"API error {e.code} for {_operation(path)}") from e
+    except (OSError, http.client.HTTPException) as e:
+        # A timeout, a refused or reset connection, a failed lookup, or a
+        # response cut off mid-read: no usable answer, so the next request
+        # would fare the same.
+        raise HealthNetworkError("Network error. Check your connection.") from e
 
     try:
         body = json.loads(raw)
@@ -341,11 +362,12 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
     return body
 
 
-class GoogleGatewayTimeout(GoogleHealthError):
+class GoogleGatewayTimeout(HealthAPIError):
     """A 504, which Google's own guidance says to retry with a smaller page.
 
-    Internal to the paging loop: callers see whatever the retry ends up
-    raising, so this never reaches run_sync.
+    The paging loop catches it and retries. A caller that is not paging sees
+    an API error like any other answered error, rather than an exception
+    `run_sync` would report as unexpected.
     """
 
 
@@ -507,6 +529,9 @@ def get_irn_profile() -> dict:
     return google_get("users/me/irnProfile", {})
 
 
+_EXERCISE_NAME = re.compile(r"users/[A-Za-z0-9_-]+/dataTypes/exercise/dataPoints/[A-Za-z0-9_-]+")
+
+
 def export_exercise_tcx(name: str) -> str:
     """One exercise's TCX export, as the text Google sends.
 
@@ -514,7 +539,12 @@ def export_exercise_tcx(name: str) -> str:
     through the same client and error handling as every other request; the two
     carry the same bytes. Google requires the location scope as well as the
     activity one for this call.
+
+    The name comes from a response and becomes a request path with the token
+    attached, so anything but an exercise's own resource name is refused.
     """
+    if not isinstance(name, str) or not _EXERCISE_NAME.fullmatch(name):
+        raise HealthAPIError("An exercise export was asked for something that is not an exercise.")
     body = google_get(f"{quote(name, safe='/')}:exportExerciseTcx", {})
     tcx = body.get("tcxData")
     if not isinstance(tcx, str):
