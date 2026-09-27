@@ -10,6 +10,9 @@ from ..helpers import LIVE_HINT, format_response, parse_date, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
+#: What a workout carries that runs long: every event, split and split summary.
+_DETAIL_ARRAYS = ("exercise_events", "splits", "split_summaries")
+
 
 @mcp.tool()
 @require_auth
@@ -18,6 +21,7 @@ async def health_get_exercises(
     end_date: str | None = None,
     exercise_type: str | None = None,
     live: bool = False,
+    include_detail: bool = False,
 ) -> str:
     """Get exercise log entries (individual tracked activities).
 
@@ -32,9 +36,15 @@ async def health_get_exercises(
             no workout name the cache holds is refused, naming those, rather
             than answered as a period with no workouts.
         live: If true, re-fetch this window from the API before reading the cache.
+        include_detail: If true, include every exercise event (start, pause, stop),
+            split and split summary. Without it each entry carries only how many
+            there are.
 
     Returns exercise entries with name, duration, calories, avg heart rate,
-    distance, and source (auto-detect vs manual).
+    distance, and source (auto-detect vs manual), and for a synced workout also
+    start and end times with their UTC offsets, active_seconds, notes, Google's
+    metrics_summary whole (pace, speed, elevation, heart-rate zone durations,
+    mobility), exercise_metadata (hasGps, pool length) and data_source.
     Note: HR data from cycling may be unreliable (optical sensor vs handlebar grip).
     """
     start, end = parse_date(start_date, end_date, default_days=30)
@@ -67,6 +77,15 @@ async def health_get_exercises(
                 "hint": LIVE_HINT,
             }
         )
+
+    for entry in entries:
+        entry["detail_counts"] = {
+            key: len(entry[key]) if isinstance(entry.get(key), list) else 0
+            for key in _DETAIL_ARRAYS
+        }
+        if not include_detail:
+            for key in _DETAIL_ARRAYS:
+                entry.pop(key, None)
 
     return format_response({"exercises": entries, "count": len(entries)})
 

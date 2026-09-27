@@ -140,3 +140,131 @@ class TestTheFields:
     def test_the_display_name_is_preferred_over_the_enum(self, tmp_db, sync):
         sync([_exercise(display="Cycle")])
         assert db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")[0]["name"] == "Cycle"
+
+
+# Fictional throughout.
+_METRICS = {
+    "caloriesKcal": 89,
+    "averagePaceSecondsPerMeter": 0.25,
+    "elevationGainMillimeters": 12000,
+    "heartRateZoneDurations": {"lightTime": "600s", "peakTime": "0s"},
+}
+_SPLIT = {
+    "startTime": "2026-03-15T09:43:50Z",
+    "endTime": "2026-03-15T09:53:50Z",
+    "splitType": "DISTANCE",
+    "metricsSummary": {"distanceMillimeters": 1000000},
+}
+
+
+def _full_exercise():
+    point = _exercise(metrics=_METRICS)
+    point["exercise"].update(
+        {
+            "interval": {
+                "startTime": "2026-03-15T09:43:50Z",
+                "startUtcOffset": "3600s",
+                "endTime": "2026-03-15T10:10:07Z",
+                "endUtcOffset": "3600s",
+            },
+            "notes": "fictional note",
+            "createTime": "2026-03-15T10:11:00Z",
+            "updateTime": "2026-03-15T10:12:00Z",
+            "exerciseMetadata": {"hasGps": True},
+            "exerciseEvents": [{"eventTime": "2026-03-15T09:43:50Z", "exerciseEventType": "START"}],
+            "splits": [_SPLIT],
+            "splitSummaries": [_SPLIT, _SPLIT],
+        }
+    )
+    return point
+
+
+class TestEverythingElseAWorkoutCarries:
+    """Stored as Google sent it, where the columns above keep a few figures."""
+
+    def test_each_field_is_stored(self, tmp_db, sync):
+        point = _full_exercise()
+        sync([point])
+        (row,) = db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")
+        assert row["end_time"] == "2026-03-15T10:10:07Z"
+        assert row["start_utc_offset"] == "3600s"
+        assert row["end_utc_offset"] == "3600s"
+        assert row["active_seconds"] == 1576.8
+        assert row["notes"] == "fictional note"
+        assert row["create_time"] == "2026-03-15T10:11:00Z"
+        assert row["update_time"] == "2026-03-15T10:12:00Z"
+        assert row["metrics_summary"] == _METRICS
+        assert row["exercise_metadata"] == {"hasGps": True}
+        assert row["data_source"] == point["dataSource"]
+        assert row["exercise_events"] == point["exercise"]["exerciseEvents"]
+        assert row["splits"] == [_SPLIT]
+        assert row["split_summaries"] == [_SPLIT, _SPLIT]
+
+    def test_what_a_workout_lacks_is_stored_as_absent(self, tmp_db, sync):
+        """An id-keyed row withdraws what Google stopped sending, rather than
+        keeping an older copy of it."""
+        sync([_full_exercise()])
+        sync([_exercise()])
+        (row,) = db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")
+        assert row["splits"] is None
+        assert row["exercise_events"] is None
+        assert row["notes"] is None
+
+    def test_an_empty_array_is_stored_as_absent(self, tmp_db, sync):
+        point = _full_exercise()
+        point["exercise"]["splits"] = []
+        point["exercise"]["exerciseMetadata"] = {}
+        sync([point])
+        (row,) = db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")
+        assert row["splits"] is None
+        assert row["exercise_metadata"] is None
+
+    def test_an_unreadable_stored_value_reads_as_absent(self, tmp_db):
+        db.save_exercise(tmp_db, "x", {"date": "2026-03-15", "name": "Ride", "splits": "{not json"})
+        tmp_db.commit()
+        (row,) = db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")
+        assert row["splits"] is None
+        assert row["name"] == "Ride"
+
+
+async def _call_exercises(db_path, **kwargs):
+    import json
+
+    from google_health_mcp.tools.exercise_tools import health_get_exercises
+
+    with (
+        patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH") as client,
+        patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH") as tokens,
+        patch("google_health_mcp.tools.exercise_tools.refresh_before_query"),
+        patch.object(db, "DB_PATH", db_path),
+    ):
+        client.exists.return_value = True
+        tokens.exists.return_value = True
+        return json.loads(
+            await health_get_exercises(start_date="2026-03-01", end_date="2026-04-01", **kwargs)
+        )
+
+
+class TestTheToolKeepsTheLongArraysBehindAFlag:
+    @pytest.fixture
+    def db_path(self, tmp_db, sync):
+        from pathlib import Path
+
+        sync([_full_exercise()])
+        return Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+
+    async def test_by_default_it_counts_them(self, db_path):
+        (entry,) = (await _call_exercises(db_path))["exercises"]
+        for key in ("exercise_events", "splits", "split_summaries"):
+            assert key not in entry
+        assert entry["detail_counts"] == {
+            "exercise_events": 1,
+            "splits": 1,
+            "split_summaries": 2,
+        }
+        assert entry["metrics_summary"] == _METRICS
+
+    async def test_it_returns_them_when_asked(self, db_path):
+        (entry,) = (await _call_exercises(db_path, include_detail=True))["exercises"]
+        assert entry["splits"] == [_SPLIT]
+        assert len(entry["split_summaries"]) == 2

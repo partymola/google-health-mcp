@@ -46,10 +46,15 @@ def _flag(value) -> int | None:
     return int(value) if isinstance(value, bool) else None
 
 
+def _json(value) -> str | None:
+    """An object or array as Google sent it, as JSON text; None for anything else."""
+    return json.dumps(value) if isinstance(value, (dict, list)) and value else None
+
+
 def _source(point: dict) -> str | None:
     """The point's `dataSource`, whole, as JSON text."""
     source = point.get("dataSource")
-    return json.dumps(source) if isinstance(source, dict) and source else None
+    return _json(source) if isinstance(source, dict) else None
 
 
 def _date(payload: dict) -> str | None:
@@ -698,6 +703,22 @@ def sync_exercises(conn, start, end) -> int:
             "source": ((point.get("dataSource") or {}).get("device") or {}).get("displayName"),
             "log_type": payload.get("exerciseType"),
             "provider": PROVIDER,
+            # Everything else the workout carries, as Google sent it. Written
+            # even when absent, as this id-keyed row's other fields are, so a
+            # revised workout withdraws what Google stopped sending.
+            "end_time": interval.get("endTime"),
+            "start_utc_offset": _text(interval.get("startUtcOffset")),
+            "end_utc_offset": _text(interval.get("endUtcOffset")),
+            "active_seconds": seconds,
+            "notes": _text(payload.get("notes")),
+            "create_time": _text(payload.get("createTime")),
+            "update_time": _text(payload.get("updateTime")),
+            "metrics_summary": _json(payload.get("metricsSummary")),
+            "exercise_metadata": _json(payload.get("exerciseMetadata")),
+            "exercise_events": _json(payload.get("exerciseEvents")),
+            "splits": _json(payload.get("splits")),
+            "split_summaries": _json(payload.get("splitSummaries")),
+            "data_source": _source(point),
         }
         db.save_exercise(conn, identifier, row)
         count += 1

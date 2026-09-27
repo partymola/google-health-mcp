@@ -51,7 +51,20 @@ CREATE TABLE IF NOT EXISTS exercises (
     start_time TEXT,
     source TEXT,
     log_type TEXT,
-    provider TEXT
+    provider TEXT,
+    end_time TEXT,
+    start_utc_offset TEXT,
+    end_utc_offset TEXT,
+    active_seconds REAL,
+    notes TEXT,
+    create_time TEXT,
+    update_time TEXT,
+    metrics_summary TEXT,
+    exercise_metadata TEXT,
+    exercise_events TEXT,
+    splits TEXT,
+    split_summaries TEXT,
+    data_source TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_exercises_date ON exercises(date);
@@ -282,6 +295,19 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("cardio_fitness", "estimated", "INTEGER"),
     ("cardio_fitness", "vo2_max_covariance", "REAL"),
     ("cardio_fitness", "data_source", "TEXT"),
+    ("exercises", "end_time", "TEXT"),
+    ("exercises", "start_utc_offset", "TEXT"),
+    ("exercises", "end_utc_offset", "TEXT"),
+    ("exercises", "active_seconds", "REAL"),
+    ("exercises", "notes", "TEXT"),
+    ("exercises", "create_time", "TEXT"),
+    ("exercises", "update_time", "TEXT"),
+    ("exercises", "metrics_summary", "TEXT"),
+    ("exercises", "exercise_metadata", "TEXT"),
+    ("exercises", "exercise_events", "TEXT"),
+    ("exercises", "splits", "TEXT"),
+    ("exercises", "split_summaries", "TEXT"),
+    ("exercises", "data_source", "TEXT"),
 )
 
 
@@ -644,10 +670,23 @@ def _rows_to_dicts(rows) -> list[dict]:
                 d["zones"] = json.loads(d["zones"])
             except (json.JSONDecodeError, TypeError):
                 pass
-        if "data_source" in d:
-            d["data_source"] = _decoded(d["data_source"])
+        for column in _JSON_COLUMNS & d.keys():
+            d[column] = _decoded(d[column])
         result.append(d)
     return result
+
+
+#: Columns holding an object or array as Google sent it, decoded on read.
+_JSON_COLUMNS = frozenset(
+    {
+        "data_source",
+        "metrics_summary",
+        "exercise_metadata",
+        "exercise_events",
+        "splits",
+        "split_summaries",
+    }
+)
 
 
 def query_heart_rate(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:
