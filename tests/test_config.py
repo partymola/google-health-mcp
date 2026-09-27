@@ -14,7 +14,13 @@ from tests.conftest import FETCHERS
 _SCOPE_READERS = config.GOOGLE_SCOPE_READERS
 #: Readers that are calls outside the data-point collection, so GOOGLE_TYPES
 #: has no entry to name.
-_NOT_A_DATA_TYPE = {"list_paired_devices"}
+_NOT_A_DATA_TYPE = {
+    "list_paired_devices",
+    "get_settings",
+    "get_profile",
+    "get_irn_profile",
+    "export_exercise_tcx",
+}
 
 
 def _types_the_package_fetches() -> set[str]:

@@ -9,7 +9,7 @@ holds for them.
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from .. import api, db
 
@@ -755,6 +755,97 @@ def sync_food_log(conn, start, end) -> int:
     return count
 
 
+def sync_account(conn, start, end) -> int:
+    """The profile, settings and irregular-rhythm enrolment, as Google sent them.
+
+    Records of the account rather than dated series, so the window does not
+    apply: each run stores the current record whole. An empty answer writes
+    nothing rather than a record of nothing.
+    """
+    records = {
+        "profile": api.get_profile(),
+        "settings": api.get_settings(),
+        "irn_profile": api.get_irn_profile(),
+    }
+    fetched_at = datetime.now().astimezone().isoformat()
+    count = 0
+    for resource, body in records.items():
+        if not isinstance(body, dict) or not body:
+            continue
+        db.save_account(
+            conn,
+            {
+                "resource": resource,
+                "body": json.dumps(body),
+                "fetched_at": fetched_at,
+                "provider": PROVIDER,
+            },
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+#: Height is logged rarely and long ago, so every sync reads its whole history
+#: rather than the window: a single reading from years back is the usual case,
+#: and no incremental window would ever reach it.
+_HEIGHT_HISTORY_START = date(1970, 1, 1)
+
+
+def sync_height(conn, start, end) -> int:
+    """Height readings, in millimetres as Google reports them."""
+    count = 0
+    until = _window(start, end)[1]
+    for point in api.list_google_data_points("height", _HEIGHT_HISTORY_START, until):
+        payload = point.get("height")
+        if not isinstance(payload, dict):
+            continue
+        day, stamp = _civil(payload)
+        millimetres = _number(payload.get("heightMillimeters"), int)
+        if day is None or millimetres is None:
+            continue
+        db.save_height(
+            conn, {"datetime": stamp, "date": day, "height_mm": millimetres, "provider": PROVIDER}
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+def sync_exercise_routes(conn, start, end) -> int:
+    """The TCX export of every exercise in the window that recorded GPS.
+
+    Only an exercise Google marks `hasGps` is exported: without GPS the export
+    is an empty activity. A route already held is not fetched again, since a
+    recorded route does not change and each one is around half a megabyte.
+    """
+    held = db.route_ids(conn)
+    count = 0
+    for point in api.list_google_data_points("exercise", *_window(start, end)):
+        payload = point.get("exercise")
+        identifier = point.get("name")
+        if not isinstance(payload, dict) or not identifier or identifier in held:
+            continue
+        if not (payload.get("exerciseMetadata") or {}).get("hasGps"):
+            continue
+        interval = payload.get("interval") or {}
+        day = _local_date(interval.get("startTime"), interval.get("startUtcOffset"))
+        if day is None:
+            continue
+        db.save_exercise_route(
+            conn,
+            {
+                "log_id": identifier,
+                "date": day,
+                "tcx": api.export_exercise_tcx(identifier),
+                "provider": PROVIDER,
+            },
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
 #: What the sync loop calls for each cached type. Taken as an argument by
 #: `run_sync` rather than read inside it, so a caller can sync a subset into a
 #: copy of the database without the loop knowing anything about providers.
@@ -774,4 +865,7 @@ GOOGLE_SYNC_HANDLERS = {
     "irn": sync_irn,
     "cardio_fitness": sync_cardio_fitness,
     "food_log": sync_food_log,
+    "account": sync_account,
+    "height": sync_height,
+    "exercise_routes": sync_exercise_routes,
 }

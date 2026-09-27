@@ -50,3 +50,44 @@ async def health_get_weight(
         )
 
     return format_response({"weight": entries, "count": len(entries)})
+
+
+@mcp.tool()
+@require_auth
+async def health_get_height(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    live: bool = False,
+) -> str:
+    """Get height readings, in millimetres as Google reports them.
+
+    Height is usually logged once, often years back, so the default window is
+    the last ten years. Returns data from the local cache by default.
+
+    Args:
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "Nd". Default: ten years back.
+        end_date: End date as "YYYY-MM-DD". Default: today.
+        live: If true, re-fetch height from the API before reading the cache.
+
+    Returns one entry per reading with datetime, date and height_mm.
+    """
+    start, end = parse_date(start_date, end_date, default_days=3653)
+
+    await anyio.to_thread.run_sync(lambda: refresh_before_query("height", start, end, live))
+
+    def _query():
+        conn = db.get_db()
+        try:
+            return db.query_height(conn, start.isoformat(), end.isoformat())
+        finally:
+            conn.close()
+
+    entries = await anyio.to_thread.run_sync(_query)
+    if not entries:
+        return format_response(
+            {
+                "message": "No height reading found for this period.",
+                "hint": "Try live=True to re-fetch this window from the API.",
+            }
+        )
+    return format_response({"height": entries, "count": len(entries)})

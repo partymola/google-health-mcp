@@ -172,6 +172,29 @@ CREATE TABLE IF NOT EXISTS irn (
 
 CREATE INDEX IF NOT EXISTS idx_irn_date ON irn(date);
 
+CREATE TABLE IF NOT EXISTS account (
+    resource TEXT PRIMARY KEY,
+    body TEXT,
+    fetched_at TEXT,
+    provider TEXT
+);
+
+CREATE TABLE IF NOT EXISTS height (
+    datetime TEXT PRIMARY KEY,
+    date TEXT NOT NULL,
+    height_mm INTEGER,
+    provider TEXT
+);
+
+CREATE TABLE IF NOT EXISTS exercise_routes (
+    log_id TEXT PRIMARY KEY,
+    date TEXT NOT NULL,
+    tcx TEXT,
+    provider TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_exercise_routes_date ON exercise_routes(date);
+
 CREATE TABLE IF NOT EXISTS authorisation (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     missing_scopes TEXT,
@@ -246,6 +269,9 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "food_log": ("date",),
     "ecg": ("reading_id",),
     "irn": ("alert_id",),
+    "account": ("resource",),
+    "height": ("datetime",),
+    "exercise_routes": ("log_id",),
     "authorisation": ("id",),
 }
 
@@ -369,6 +395,18 @@ def save_irn(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "irn", row)
 
 
+def save_account(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "account", row)
+
+
+def save_height(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "height", row)
+
+
+def save_exercise_route(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "exercise_routes", row)
+
+
 def save_authorisation(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "authorisation", row)
 
@@ -471,6 +509,8 @@ _DATA_TABLE_MAP: dict[str, str] = {
     "food_log": "food_log",
     "ecg": "ecg",
     "irn": "irn",
+    "height": "height",
+    "exercise_routes": "exercise_routes",
 }
 
 
@@ -705,6 +745,32 @@ def query_irn(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[
         alert["alert_windows"] = _decoded(alert["alert_windows"])
         alerts.append(alert)
     return alerts
+
+
+def query_account(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Each stored account record by resource, its JSON decoded."""
+    return {
+        row["resource"]: {"body": _decoded(row["body"]), "fetched_at": row["fetched_at"]}
+        for row in conn.execute("SELECT resource, body, fetched_at FROM account")
+    }
+
+
+def query_height(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM height WHERE date >= ? AND date <= ? ORDER BY datetime",
+        (start_date, end_date),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def query_exercise_route(conn: sqlite3.Connection, log_id: str) -> dict | None:
+    row = conn.execute("SELECT * FROM exercise_routes WHERE log_id = ?", (log_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def route_ids(conn: sqlite3.Connection) -> set[str]:
+    """The exercises whose route is already held."""
+    return {row[0] for row in conn.execute("SELECT log_id FROM exercise_routes")}
 
 
 def query_food_log(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:

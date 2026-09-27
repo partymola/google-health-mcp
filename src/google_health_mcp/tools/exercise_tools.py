@@ -1,4 +1,6 @@
-"""Exercise log query tool."""
+"""Exercise log and route query tools."""
+
+from datetime import date
 
 import anyio
 
@@ -67,3 +69,44 @@ async def health_get_exercises(
         )
 
     return format_response({"exercises": entries, "count": len(entries)})
+
+
+@mcp.tool()
+@require_auth
+async def health_get_exercise_route(log_id: str, include_tcx: bool = False) -> str:
+    """Get the GPS route of one exercise, as the TCX file Google exports.
+
+    Only exercises recorded with GPS have a route. The TCX text carries every
+    trackpoint (time, position, altitude, distance, heart rate) and runs to
+    around half a megabyte, so it is returned only when asked for.
+
+    Args:
+        log_id: The exercise's `log_id`, as health_get_exercises returns it.
+        include_tcx: If true, include the TCX text itself.
+
+    Returns the exercise's log_id and date, and the TCX text when asked for.
+    """
+    today = date.today()
+    await anyio.to_thread.run_sync(
+        lambda: refresh_before_query("exercise_routes", today, today, False)
+    )
+
+    def _query():
+        conn = db.get_db()
+        try:
+            return db.query_exercise_route(conn, log_id)
+        finally:
+            conn.close()
+
+    route = await anyio.to_thread.run_sync(_query)
+    if route is None:
+        return format_response(
+            {
+                "message": f"No route is held for exercise '{log_id}'.",
+                "hint": "Only exercises recorded with GPS have one.",
+            }
+        )
+    tcx = route.pop("tcx")
+    if include_tcx:
+        route["tcx"] = tcx
+    return format_response(route)

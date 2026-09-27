@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from datetime import date, timedelta
 from typing import NamedTuple
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from . import config
 from .auth import RefreshNetworkError, TokenRefused, refresh_google_token
@@ -203,6 +203,7 @@ GOOGLE_TYPES: dict[str, GoogleType] = {
         _sample("weight", "weight"),
         _sample("body-fat", "bodyFat"),
         _sample("core-body-temperature", "coreBodyTemperature"),
+        _sample("height", "height"),
         _sample("vo2-max", "vo2Max"),
         _interval("nutrition-log", "nutritionLog"),
         _interval("hydration-log", "hydrationLog"),
@@ -489,6 +490,36 @@ def daily_roll_up(data_type: str, start: date, end: date) -> list[dict]:
         points.extend(page or [])
         window_start = window_end
     return points
+
+
+def get_profile() -> dict:
+    """The account's profile: age, membership start, stride lengths."""
+    return google_get("users/me/profile", {})
+
+
+def get_settings() -> dict:
+    """The account's settings: units, time zone, locale."""
+    return google_get("users/me/settings", {})
+
+
+def get_irn_profile() -> dict:
+    """Enrolment in irregular-rhythm notifications."""
+    return google_get("users/me/irnProfile", {})
+
+
+def export_exercise_tcx(name: str) -> str:
+    """One exercise's TCX export, as the text Google sends.
+
+    Read through the JSON form (`tcxData`) rather than `alt=media`, so it goes
+    through the same client and error handling as every other request; the two
+    carry the same bytes. Google requires the location scope as well as the
+    activity one for this call.
+    """
+    body = google_get(f"{quote(name, safe='/')}:exportExerciseTcx", {})
+    tcx = body.get("tcxData")
+    if not isinstance(tcx, str):
+        raise HealthAPIError("Google returned an exercise export with no TCX text.")
+    return tcx
 
 
 def list_paired_devices() -> list[dict]:

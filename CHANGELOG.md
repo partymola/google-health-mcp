@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- `health_get_profile` returns your profile (age, membership start, stride lengths), settings (units, time zone, locale) and irregular-rhythm enrolment, each as the record Google returns.
+- `health_get_height` returns height readings, in millimetres as Google reports them. Every sync reads the whole height history, since a single reading from years back is the usual case.
+- `health_get_exercise_route` returns a workout's GPS route as the TCX file Google exports. Only workouts recorded with GPS have one, and the text, around half a megabyte, travels only when asked for with `include_tcx`.
+- When your authorisation lacks a permission this version reads, every tool response carries an `authorisation` note naming it and the fix, `doctor` reports it under the new check `missing-scopes`, and `sync` prints it. The note comes from the shared database, so a cache-only host with no token carries it too.
+- `auth` checks the account you consented with. Choosing a Google account that holds no health data produces a grant that works and reads nothing; `auth` now says so and exits 1, and a sync or query answered that way says to authorise again with the right account instead of reporting a bare `API error 400`.
+
+### Changed
+
+- Two more read-only scopes are requested: `profile.readonly` and `location.readonly`, the second for workout routes. **Run `google-health-mcp auth` again** to grant them; until you do, everything else keeps syncing and the `authorisation` note names what is missing.
+- The token file now also records the scopes Google reports granting.
+
 ### Fixed
 
 - `health_get_spo2` and `health_trends` no longer tell the model that an imported night's `min`/`max` and a synced night's `avg_ci_low`/`avg_ci_high` are different measurements that must never be combined. On the history checked, the imported pair matched Google's bounds on every night carrying both. Stored data and responses are unchanged.

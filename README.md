@@ -28,8 +28,10 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 | `health_get_heart_rate` | Resting heart rate |
 | `health_get_activity` | Steps, calories, distance, floors |
 | `health_get_exercises` | Workouts (name, duration, heart rate, calories) |
+| `health_get_exercise_route` | One workout's GPS route, as the TCX file Google exports |
 | `health_get_sleep` | Duration, stages, sleep period |
 | `health_get_weight` | Weight, body fat % |
+| `health_get_height` | Height readings |
 | `health_get_spo2` | Nightly blood oxygen saturation |
 | `health_get_hrv` | Heart rate variability (RMSSD) |
 | `health_get_azm` | Active zone minutes, with the per-zone breakdown |
@@ -41,6 +43,7 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 | `health_get_ecg` | Electrocardiograms: classification, average rate, duration, waveform on request |
 | `health_get_irregular_rhythm` | Irregular-rhythm notifications and the windows that triggered them |
 | `health_get_devices` | Paired devices, battery level, last sync |
+| `health_get_profile` | Your profile, settings and irregular-rhythm enrolment, as Google returns them |
 | `health_get_lifetime_stats` | Totals and best days over the cached history, with its coverage |
 | `health_trends` | Aggregated averages and period comparisons |
 
@@ -165,7 +168,8 @@ google-health-mcp sync           Sync data to the local cache
   --types TYPE,...      Data types to sync (default: all). One or more of:
                         heart_rate, activity, exercises, sleep, weight, spo2,
                         hrv, azm, breathing_rate, skin_temperature,
-                        core_temperature, cardio_fitness, food_log, ecg, irn
+                        core_temperature, cardio_fitness, food_log, ecg, irn,
+                        account, height, exercise_routes
   --since YYYY-MM-DD    Fetch from this date, ignoring the incremental cursor
   --until YYYY-MM-DD    Inclusive end date for a --since window; together they
                         re-fetch exactly that window, to repair a gap in the
@@ -178,13 +182,15 @@ google-health-mcp import         Import exported JSON data files
 
 Query tools sync on the first query of each day per data type, then read the cache.
 
-All query tools except `health_get_devices` and `health_get_lifetime_stats`, which take no arguments, accept:
+All query tools except `health_get_devices`, `health_get_lifetime_stats`, `health_get_profile` and `health_get_exercise_route` accept:
 
 - `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: last 30 days.
 - `end_date` - `YYYY-MM-DD`. Default: today.
 - `live` - if true, re-fetch this window from the API before reading the cache. A failed refresh is reported rather than silently answered from the cache.
 
-`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead.
+`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead. `health_get_exercise_route` takes a workout's `log_id` and `include_tcx`, for the same reason: a route is around half a megabyte of trackpoints, and only workouts recorded with GPS have one.
+
+**If your authorisation lacks a permission this version reads**, every tool response carries an `authorisation` note naming it, `doctor` reports it under the check `missing-scopes`, and `sync` prints it. A grant does not gain permissions on refresh, so this is what an upgrade that adds one looks like until you run `google-health-mcp auth` again.
 
 ### health_sync
 
@@ -208,16 +214,18 @@ Tick these read-only scopes on the Data Access page. All are under `https://www.
 | Scope | Data accessed |
 |-------|--------------|
 | `activity_and_fitness.readonly` | Steps, distance, floors, calories, workouts, active zone minutes |
-| `health_metrics_and_measurements.readonly` | Heart rate, HRV, SpO2, breathing rate, weight, body fat, temperature, VO2 max |
+| `health_metrics_and_measurements.readonly` | Heart rate, HRV, SpO2, breathing rate, weight, body fat, height, temperature, VO2 max |
 | `sleep.readonly` | Sleep sessions and stages |
 | `nutrition.readonly` | Food and water logs |
 | `ecg.readonly` | Electrocardiograms |
-| `irn.readonly` | Irregular-rhythm notifications |
-| `settings.readonly` | Paired devices |
+| `irn.readonly` | Irregular-rhythm notifications and enrolment |
+| `settings.readonly` | Paired devices, units and time zone |
+| `profile.readonly` | Age, membership start, stride lengths |
+| `location.readonly` | GPS routes of workouts |
 
-`location.readonly` and `profile.readonly` are two the console offers that this package deliberately does not request, because nothing here reads either - the first is the GPS track recorded during an exercise.
+`reproductive_health.readonly`, `logged_symptoms.readonly` and `mindfulness.readonly` are offered by the console and this package does not request them. The cycle, ovulation-test, symptom and mood data types answer a read with "supported: create, update, batchDelete", and the API has no mindfulness data type at all, so there is nothing to read under them.
 
-**Read the list off the console, not off the published scope page** - read-only scopes exist that appear in neither Google's documentation nor the API's own discovery document, and the discovery document omits `nutrition.readonly` outright. To request fewer, tick fewer on the Data Access page and edit `GOOGLE_SCOPES` in `config.py` before authorising, which needs a source checkout rather than a `pip` or `uvx` install. A grant does not gain scopes on refresh, so widening the list later means running `auth` again.
+**Read the list off the console, not off the published scope page** - read-only scopes exist that appear in neither Google's documentation nor the API's own discovery document, and the discovery document omits `nutrition.readonly` outright. To request fewer, tick fewer on the Data Access page and remove them from `GOOGLE_SCOPE_READERS` in `config.py` before authorising, which needs a source checkout rather than a `pip` or `uvx` install; the data under a scope you leave out will not sync. A grant does not gain scopes on refresh, so widening the list later means running `auth` again.
 
 ## Configuration
 

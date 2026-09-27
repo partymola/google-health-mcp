@@ -35,6 +35,7 @@ from .tools import (  # noqa: E402
     heart_tools,  # noqa: E402, F401
     hrv_tools,  # noqa: E402, F401
     lifetime_stats_tools,  # noqa: E402, F401
+    profile_tools,  # noqa: E402, F401
     rhythm_tools,  # noqa: E402, F401
     sleep_tools,  # noqa: E402, F401
     spo2_tools,  # noqa: E402, F401

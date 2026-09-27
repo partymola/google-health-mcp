@@ -63,12 +63,16 @@ GOOGLE_SCOPE_READERS: dict[str, tuple[str, ...]] = {
         "weight",
         "body-fat",
         "core-body-temperature",
+        "height",
     ),
     "sleep": ("sleep",),
     "nutrition": ("nutrition-log", "hydration-log"),
     "ecg": ("electrocardiogram",),
-    "irn": ("irregular-rhythm-notification",),
-    "settings": ("list_paired_devices",),
+    "irn": ("irregular-rhythm-notification", "get_irn_profile"),
+    "settings": ("list_paired_devices", "get_settings"),
+    "profile": ("get_profile",),
+    # Exercise routes; Google requires it together with activity_and_fitness.
+    "location": ("export_exercise_tcx",),
 }
 GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/googlehealth."
 GOOGLE_SCOPES = " ".join(f"{GOOGLE_SCOPE_PREFIX}{name}.readonly" for name in GOOGLE_SCOPE_READERS)
@@ -117,4 +121,7 @@ CACHED_DATA_TYPES = (
     "food_log",
     "ecg",
     "irn",
+    "account",
+    "height",
+    "exercise_routes",
 )
