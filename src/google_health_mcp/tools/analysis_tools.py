@@ -157,13 +157,7 @@ def _trend_weight(conn, start_date: str, end_date: str, period: str) -> dict:
 
 
 def _trend_spo2(conn, start_date: str, end_date: str, period: str) -> dict:
-    """Both definitions of a night's bounds, reported side by side.
-
-    `min`/`max` are observed nightly extremes; `avg_ci_low`/`avg_ci_high` are
-    a confidence interval on the average. Averaging the two into one series
-    makes the change from one definition to the other read as
-    physiology, so each period says how many nights of each it holds.
-    """
+    """The average and both stored bound pairs, each with its night count, unmerged."""
     rows = db.query_spo2(conn, start_date, end_date)
     if not rows:
         return {"message": "No SpO2 data in cache. No data recorded for this period."}
@@ -178,7 +172,7 @@ def _trend_spo2(conn, start_date: str, end_date: str, period: str) -> dict:
         # Counted per row over both ends of a pair. Taking the longer of the
         # two lists instead undercounts whenever the missing end varies -
         # three nights with a minimum and two with a maximum are five nights
-        # carrying an extreme, not three.
+        # carrying an imported bound, not three.
         _count_row(buckets[key], "_extremes", r, ("min", "max"))
         _count_row(buckets[key], "_ci", r, ("avg_ci_low", "avg_ci_high"))
 
@@ -656,21 +650,18 @@ async def health_trends(
     For heart_rate: resting HR min/avg/max. For weight: weight, fat%, BMI.
     For hrv: daily and deep RMSSD.
 
-    Two data types report their history under two definitions, each with the
-    count of readings behind it - never merge them into one series. For spo2,
-    min_spo2/max_spo2 are observed nightly extremes, while
-    avg_nightly_ci_low/avg_nightly_ci_high average the nightly bounds of a
-    confidence interval on each night's own average. For cardio_fitness,
-    avg_vo2_max_low/high average a reported band while avg_vo2_max averages a
-    single value.
+    For cardio_fitness, avg_vo2_max_low/high average a reported band while
+    avg_vo2_max averages a single value: two definitions, each with the count
+    of readings behind it, never one series.
 
-    Those per-definition fields and their counts appear in the period form
-    only. `compare=` reports spo2 as avg_spo2 alone, which is deliberate and
-    not a gap: that column means the same thing under both definitions, so it
-    is the one figure two windows either side of the switchover can be
-    compared on. Ask for the period form when you need to know which
-    definition is behind a number. cardio_fitness has no such neutral column,
-    so `compare=` carries both definitions there.
+    For spo2, min_spo2/max_spo2 are the lowest and highest bound among
+    imported nights (counted by nights_observed_extremes), and
+    avg_nightly_ci_low/avg_nightly_ci_high the mean of the nightly bounds this
+    API reports (counted by nights_confidence_interval).
+
+    These fields and their counts appear in the period form only.
+    `compare=` reports spo2 as avg_spo2 alone, and carries both cardio_fitness
+    definitions.
     Not for raw data - use health_get_* tools instead.
     """
 

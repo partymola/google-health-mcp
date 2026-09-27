@@ -27,14 +27,12 @@ async def health_get_spo2(
         end_date: End date as "YYYY-MM-DD". Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
-    Returns one entry per night with avg SpO2 percentage, and a pair of
-    bounds whose meaning depends on which provider recorded the night:
-    min/max are the observed nightly extremes, avg_ci_low/avg_ci_high are a
-    confidence interval on that night's average. Only an import fills the
-    first pair and only this API fills the second, so a night covered by both
-    carries all four - which is the ordinary case wherever an imported
-    history overlaps the synced one. They are different measurements: never
-    compare or average across them.
+    Returns one entry per night: avg SpO2 percentage and up to two pairs of
+    bounds. avg_ci_low/avg_ci_high come from this API, which Google
+    describes as the lower and upper bound of the confidence interval of
+    oxygen saturation samples during sleep. min/max hold whatever an import
+    carried; on the history checked, they matched avg_ci_low/avg_ci_high on
+    every night carrying both.
     Normal range: 95-100%. Below 90% may indicate sleep apnea.
     """
     start, end = parse_date(start_date, end_date, default_days=30)

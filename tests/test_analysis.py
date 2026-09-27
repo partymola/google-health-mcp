@@ -154,13 +154,11 @@ class TestTrendSpo2:
         assert "message" in result
 
 
-class TestTheTwoSpo2Definitions:
-    """A night's bounds mean one of two different things, and only one is an extreme.
+class TestTheTwoSpo2BoundPairs:
+    """An import's `min`/`max` and this API's bounds are reported as stored.
 
-    The 0.x era stored the observed nightly minimum and maximum; Google
-    reports a confidence interval on the average. Averaged into one series
-    the switchover reads as a change in the person rather than in the
-    provider, so each period says how many nights of each it holds.
+    The trend does not merge them: each pair keeps its own fields and night
+    count, and combining them is left to whoever reads the response.
     """
 
     def test_a_period_of_confidence_intervals_reports_them(self, tmp_db):
@@ -181,7 +179,7 @@ class TestTheTwoSpo2Definitions:
         assert p["avg_nightly_ci_low"] == 94.5
         assert p["avg_nightly_ci_high"] == 98.5
 
-    def test_a_confidence_interval_is_never_reported_as_an_extreme(self, tmp_db):
+    def test_this_apis_bounds_never_count_as_imported(self, tmp_db):
         db.save_spo2(
             tmp_db,
             {"date": "2026-03-20", "avg": 96.0, "avg_ci_low": 94.0, "avg_ci_high": 98.0},
@@ -210,7 +208,7 @@ class TestTheTwoSpo2Definitions:
         assert p["nights_observed_extremes"] == 3
 
     def test_a_period_holding_both_keeps_them_apart(self, populated_db):
-        """The switchover month: five nights of extremes, then two of bounds."""
+        """The switchover month: five imported nights, then two from this API."""
         for i in range(2):
             db.save_spo2(
                 populated_db,
@@ -226,7 +224,7 @@ class TestTheTwoSpo2Definitions:
         p = _trend_spo2(populated_db, "2026-03-01", "2026-03-31", "monthly")["periods"][0]
         assert p["nights_observed_extremes"] == 5
         assert p["nights_confidence_interval"] == 2
-        # The fixture's observed minimum, not the lower bound of 90.0.
+        # The fixture's imported minimum, not this API's lower bound of 90.0.
         assert p["min_spo2"] == 93.0
         assert p["avg_nightly_ci_low"] == 90.0
 

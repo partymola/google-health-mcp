@@ -2,9 +2,9 @@
 
 Three things about this API make a wrong number easy and a loud failure rare,
 and every helper here exists for one of them: integers arrive as JSON strings,
-a quantity that was not measured is absent rather than zero, and several
-values carry a different definition from the one the same column holds for a
-row that arrived by import.
+a quantity that was not measured is absent rather than zero, and a few
+quantities arrive defined differently from the figure an imported history
+holds for them.
 """
 
 import json
@@ -112,10 +112,9 @@ def sync_heart_rate(conn, start, end) -> int:
 def sync_spo2(conn, start, end) -> int:
     """Nightly oxygen saturation.
 
-    The bounds are a confidence interval on the average, not the night's
-    observed extremes, so they go to their own columns. `min`/`max` hold the
-    extremes an imported row carries and are left untouched - a trend
-    averaging the two definitions together reports the change as physiology.
+    Google's bounds go to `avg_ci_low`/`avg_ci_high`. `min`/`max` are left to
+    an import: on the history checked they matched, so writing them here
+    would store one figure twice.
     """
     count = 0
     for row in _daily_rows(

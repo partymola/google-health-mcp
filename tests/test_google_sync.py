@@ -2,8 +2,8 @@
 
 Every assertion here guards a way of producing a number that looks right.
 The API sends integers as JSON strings, sends absence rather than zero, and
-reports two of these quantities with a different definition from the one the
-same column holds for a row that arrived by import.
+reports a few quantities defined differently from the figure an imported
+history holds for them.
 """
 
 from datetime import date
@@ -84,13 +84,12 @@ class TestAbsenceIsNotZero:
         )
 
 
-class TestSpo2KeepsItsTwoDefinitionsApart:
-    def test_the_confidence_bounds_never_reach_min_and_max(self, tmp_db, stored):
-        """Google's bounds are a confidence interval on the average.
+class TestSpo2SyncLeavesTheImportedPair:
+    def test_the_bounds_go_to_their_own_columns_only(self, tmp_db, stored):
+        """Google's bounds go to `avg_ci_low`/`avg_ci_high` and nowhere else.
 
-        `min`/`max` hold observed nightly extremes. Writing a confidence bound
-        into them makes `_trend_spo2` report a change of definition as a
-        change in the body.
+        `min`/`max` belong to an import; writing Google's bounds there as well
+        would store one figure twice wherever the import carried the same values.
         """
         stored(
             google_sync.sync_spo2,
@@ -110,7 +109,7 @@ class TestSpo2KeepsItsTwoDefinitionsApart:
         assert row["min"] is None
         assert row["max"] is None
 
-    def test_an_imported_row_keeps_its_extremes(self, tmp_db, stored):
+    def test_an_imported_row_keeps_its_bounds(self, tmp_db, stored):
         """The upsert preserves them, so an imported history survives a sync."""
         db.save_spo2(tmp_db, {"date": "2026-03-15", "avg": 96.0, "min": 91.0, "max": 99.0})
         tmp_db.commit()

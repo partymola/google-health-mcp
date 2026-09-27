@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `health_get_spo2` and `health_trends` no longer tell the model that an imported night's `min`/`max` and a synced night's `avg_ci_low`/`avg_ci_high` are different measurements that must never be combined. On the history checked, the imported pair matched Google's bounds on every night carrying both. Stored data and responses are unchanged.
+
 ## 1.5.0 - 2026-09-06
 
 ### Fixed
