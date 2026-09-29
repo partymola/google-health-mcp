@@ -38,10 +38,11 @@ async def health_get_exercises(
         live: If true, re-fetch this window from the API before reading the cache.
         include_detail: If true, include every exercise event (start, pause, stop),
             split and split summary. Without it each entry carries only how many
-            there are.
+            there are (detail_counts), null where none is stored.
 
     Returns exercise entries with name, duration, calories, avg heart rate,
-    distance, and source (auto-detect vs manual), and for a synced workout also
+    distance, and source (the recording device's name; data_source.recordingMethod
+    says whether it was logged by hand), and for a synced workout also
     start and end times with their UTC offsets, active_seconds, notes, Google's
     metrics_summary whole (pace, speed, elevation, heart-rate zone durations,
     mobility), exercise_metadata (hasGps, pool length) and data_source.
@@ -80,7 +81,7 @@ async def health_get_exercises(
 
     for entry in entries:
         entry["detail_counts"] = {
-            key: len(entry[key]) if isinstance(entry.get(key), list) else 0
+            key: len(entry[key]) if isinstance(entry.get(key), list) else None
             for key in _DETAIL_ARRAYS
         }
         if not include_detail:

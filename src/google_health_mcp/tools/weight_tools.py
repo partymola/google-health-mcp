@@ -27,7 +27,8 @@ async def health_get_weight(
         end_date: End date as "YYYY-MM-DD". Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
-    Returns one entry per weigh-in with weight_kg, bmi, fat_pct.
+    Returns one entry per day with weight_kg, bmi, fat_pct. Every individual
+    weigh-in is in health_get_weight_readings.
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 
@@ -61,10 +62,9 @@ async def health_get_weight_readings(
 ) -> str:
     """Get every weigh-in and body-fat reading, as Google recorded each one.
 
-    health_get_weight keeps one row a day; a scale records each step onto it
-    separately, and this returns every one: the reading in Google's own unit
-    (weightGrams, percentage), when it was taken, and the device or app that
-    recorded it.
+    health_get_weight keeps one row a day; this returns every reading: its
+    value in Google's own unit (weightGrams, percentage), when it was taken,
+    and the device or app that recorded it.
 
     Args:
         start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
@@ -72,7 +72,8 @@ async def health_get_weight_readings(
         live: If true, re-fetch this window from the API before reading the cache.
 
     Returns weight_readings and body_fat_readings, each entry with reading_id,
-    datetime (local), date, and record (the reading as Google sent it).
+    datetime (local), date, and record (the reading as Google sent it), and
+    count, the number of readings of both kinds.
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 
@@ -100,7 +101,9 @@ async def health_get_weight_readings(
                 "hint": LIVE_HINT,
             }
         )
-    return format_response({"weight_readings": weights, "body_fat_readings": fats})
+    return format_response(
+        {"weight_readings": weights, "body_fat_readings": fats, "count": len(weights) + len(fats)}
+    )
 
 
 @mcp.tool()

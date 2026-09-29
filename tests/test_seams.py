@@ -424,8 +424,8 @@ class TestTheMigrationLockstep:
         """Two lists restate SCHEMA's tables, and a table missing from either fails quietly.
 
         The exclusions are named rather than inferred, so each stays a
-        decision: sync_log is append-only, and sync_log, authorisation and
-        account hold no dated measurement.
+        decision: sync_log is append-only and has no conflict key, and
+        sync_log, authorisation and account hold no dated measurement.
         """
         conn = sqlite3.connect(":memory:")
         try:

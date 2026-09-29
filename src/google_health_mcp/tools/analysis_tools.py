@@ -224,7 +224,7 @@ def _trend_exercises(conn, start_date: str, end_date: str, period: str) -> dict:
                 "sessions": len(b.get("_count", [])),
                 "total_duration": format_duration(sum(dur)) if dur else None,
                 "avg_duration": format_duration(_avg(dur)),
-                "total_calories": sum(b.get("calories", [])) if b.get("calories") else None,
+                "total_calories": round(sum(b["calories"]), 1) if b.get("calories") else None,
             }
         )
     return {"periods": periods, "data_type": "exercises", "aggregation": period}
@@ -449,8 +449,9 @@ def _trend_food_log(conn, start_date: str, end_date: str, period: str) -> dict:
 
 
 #: What a trend can be asked for, and what the tool's schema offers. Not every
-#: cached type has a daily series to aggregate - ECG readings and rhythm
-#: alerts are episodes - so this is not derived from the cache's own list.
+#: cached type has a daily series to aggregate (ECG readings and rhythm alerts
+#: are episodes; sleep sessions and the reading tables are records), so this is
+#: not derived from the cache's own list.
 #: `TrendType` below is unpacked from it, so an entry added here is a type the
 #: tool offers and has to be able to answer.
 _TREND_FNS = {

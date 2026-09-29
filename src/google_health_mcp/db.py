@@ -456,8 +456,9 @@ def save_core_temperature(conn: sqlite3.Connection, row: dict):
     """Write one hand-logged body temperature, keyed by (datetime, temp_celsius).
 
     Timestamps are second-resolution, so two distinct readings can share one,
-    and the pair keeps both. A reading whose value is edited upstream is a new
-    row rather than a correction, since the value is part of its key.
+    and the pair keeps both unless their values match too. A reading whose
+    value is edited upstream is a new row rather than a correction, since the
+    value is part of its key.
     """
     _upsert(conn, "core_temperature", row)
 

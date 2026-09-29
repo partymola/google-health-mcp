@@ -32,8 +32,9 @@ async def health_get_spo2(
     describes as the lower and upper bound of the confidence interval of
     oxygen saturation samples during sleep. min/max hold whatever an import
     carried; on the history checked, they matched avg_ci_low/avg_ci_high on
-    every night carrying both. std_dev is the standard deviation of the night's
-    samples, and data_source the device and platform Google says recorded it.
+    every night carrying both. std_dev is Google's standard deviation of the
+    daily SpO2 averages over the past 7-30 days, not of this night's samples,
+    and data_source the device and platform Google says recorded it.
     Normal range: 95-100%. Below 90% may indicate sleep apnea.
     """
     start, end = parse_date(start_date, end_date, default_days=30)

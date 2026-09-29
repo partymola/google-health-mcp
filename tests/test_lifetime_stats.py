@@ -40,6 +40,13 @@ class TestTheTotals:
         assert result["totals"]["floors"] == 2
         assert result["coverage"]["days"] == 2
 
+    def test_a_total_of_decimal_calories_is_summed_exactly(self, tmp_db):
+        """SQLite's SUM compensates for float error, which Python's sum does not."""
+        for day, kcal in (("2026-03-10", 2508.9), ("2026-03-11", 2100.7), ("2026-03-12", 1.1)):
+            _day(tmp_db, day, calories_out=kcal)
+        tmp_db.commit()
+        assert lifetime_from_cache(tmp_db)["totals"]["calories_out"] == 4610.7
+
     def test_an_empty_cache_answers_rather_than_raising(self, tmp_db):
         result = lifetime_from_cache(tmp_db)
         assert result["totals"]["steps"] == 0

@@ -82,10 +82,36 @@ class TestCardioFitnessKeepsTwoDefinitionsApart:
         assert (row["vo2_max_low"], row["vo2_max_high"]) == (40.0, 44.0)
         assert row["vo2_max"] == 42.0
 
-    def test_a_point_carrying_no_value_stores_nothing(self, tmp_db, sync_cardio_fitness):
+    @pytest.mark.parametrize(
+        "qualifier",
+        [{"cardioFitnessLevel": "GOOD"}, {"estimated": True}, {"vo2MaxCovariance": 1.5}],
+        ids=["level", "estimated", "covariance"],
+    )
+    def test_a_point_carrying_no_value_stores_nothing(self, tmp_db, sync_cardio_fitness, qualifier):
         """A day with no reading is not a day of zero cardio fitness."""
-        sync_cardio_fitness([_daily_point("dailyVo2Max", {"cardioFitnessLevel": "GOOD"})])
+        sync_cardio_fitness([_daily_point("dailyVo2Max", qualifier)])
         assert db.query_cardio_fitness(tmp_db, "2026-03-15", "2026-03-15") == []
+
+    def test_a_revised_value_withdraws_the_qualifiers_of_the_old_one(
+        self, tmp_db, sync_cardio_fitness
+    ):
+        """They describe the measurement they came with, not whatever replaces it."""
+        first = _daily_point(
+            "dailyVo2Max",
+            {
+                "vo2Max": 44.5,
+                "cardioFitnessLevel": "GOOD",
+                "estimated": True,
+                "vo2MaxCovariance": 2.0,
+            },
+        )
+        first["dataSource"] = {"platform": "FICTIONAL"}
+        sync_cardio_fitness([first])
+        sync_cardio_fitness([_daily_point("dailyVo2Max", {"vo2Max": 46.0})])
+        (row,) = db.query_cardio_fitness(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["vo2_max"] == 46.0
+        for column in ("cardio_fitness_level", "estimated", "vo2_max_covariance", "data_source"):
+            assert row[column] is None, column
 
 
 class TestFoodLogMergesItsTwoSources:

@@ -48,7 +48,11 @@ def _session(name="users/me/dataTypes/sleep/dataPoints/1", end="2026-03-15T07:00
 
 
 def _sync(tmp_db, points):
-    with patch.object(google_sync.api, "list_google_data_points", return_value=points):
+    with patch.object(
+        google_sync.api,
+        "list_google_data_points",
+        side_effect=lambda t, *_: points if t == "sleep" else [],
+    ):
         count = google_sync.sync_sleep_sessions(tmp_db, date(2026, 3, 1), date(2026, 4, 1))
     tmp_db.commit()
     return count
@@ -60,6 +64,8 @@ class TestEachSessionIsStoredWhole:
         assert _sync(tmp_db, [point]) == 1
         (row,) = db.query_sleep_sessions(tmp_db, "2026-03-15", "2026-03-15")
         assert row["session_id"] == point["name"]
+        assert row["start_time"] == "2026-03-14T23:00:00Z"
+        assert row["end_time"] == "2026-03-15T07:00:00Z"
         assert row["record"] == point
         assert row["provider"] == "google"
 
@@ -120,12 +126,14 @@ async def _call(db_path, **kwargs):
     with (
         patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH") as client,
         patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH") as tokens,
-        patch("google_health_mcp.tools.sleep_tools.refresh_before_query"),
+        patch("google_health_mcp.tools.sleep_tools.refresh_before_query") as refresh,
         patch.object(db, "DB_PATH", db_path),
     ):
         client.exists.return_value = True
         tokens.exists.return_value = True
-        return json.loads(await health_get_sleep_sessions(start_date="2026-03-15", **kwargs))
+        body = json.loads(await health_get_sleep_sessions(start_date="2026-03-15", **kwargs))
+    assert {c.args[0] for c in refresh.call_args_list} == {"sleep_sessions"}
+    return body
 
 
 class TestTheTool:
@@ -153,6 +161,14 @@ class TestTheTool:
         assert session["record"]["sleep"]["stages"][1]["type"] == "DEEP"
         assert session["record"]["sleep"]["outOfBedSegments"] == []
 
+    async def test_an_unreadable_record_is_returned_rather_than_failing_the_window(self, tmp_db):
+        db.save_sleep_session(
+            tmp_db, {"session_id": "users/me/dataTypes/sleep/dataPoints/9", "date": "2026-03-15"}
+        )
+        _sync(tmp_db, [_session()])
+        body = await _call(Path(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+        assert body["count"] == 2
+
     async def test_an_empty_window_says_so(self, tmp_path):
         body = await _call(tmp_path / "empty.db")
-        assert "message" in body
+        assert body["message"] == "No sleep sessions found for this period."

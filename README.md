@@ -27,7 +27,7 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 |------|------|
 | `health_get_heart_rate` | Resting heart rate |
 | `health_get_activity` | Steps, calories, distance, floors |
-| `health_get_exercises` | Workouts (name, duration, heart rate, calories) |
+| `health_get_exercises` | Workouts: name, duration, heart rate, calories, Google's metrics summary, and splits on request |
 | `health_get_exercise_route` | One workout's GPS route, as the TCX file Google exports |
 | `health_get_sleep` | Duration, stages, sleep period |
 | `health_get_sleep_sessions` | Each session as Google recorded it: metadata, summary, and every stage segment on request |
@@ -195,7 +195,7 @@ All query tools except `health_get_devices`, `health_get_lifetime_stats`, `healt
 
 `health_get_profile` takes only `live`.
 
-`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead. `health_get_sleep_sessions` also takes `include_stages`, for the same reason: without it each session carries how many stage segments, short awakenings and out-of-bed segments it has, rather than every one.
+`health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. It also takes `include_detail`: without it each workout carries how many exercise events, splits and split summaries it has, rather than every one. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead. `health_get_sleep_sessions` also takes `include_stages`, for the same reason: without it each session carries how many stage segments, short awakenings and out-of-bed segments it has, rather than every one.
 
 `health_get_exercise_route` takes a workout's `log_id`. The route text comes back only with `include_tcx`, since it can run to hundreds of kilobytes. Only workouts recorded with GPS have a route, and a sync fetches routes for the workouts in its own window, so an older one needs `health_sync` with `data_types="exercise_routes"` and `since`. A route holds every position you recorded, start and end included: it is cached on disk like the rest, and reaches the model only when `include_tcx` is set.
 
@@ -211,7 +211,7 @@ All query tools except `health_get_devices`, `health_get_lifetime_stats`, `healt
 
 ### health_trends
 
-- `data_type` - any cached type with a daily series; ECG readings and rhythm alerts are episodes and have no trend. Default: `activity`.
+- `data_type` - any cached type with a daily series; ECG readings and rhythm alerts are episodes, and sleep sessions and individual readings are records, so they have no trend. Default: `activity`.
 - `period` - `weekly`, `monthly`, `quarterly`. Default: `monthly`.
 - `start_date` / `end_date` - default: the last 12 months.
 - `compare` - two periods, e.g. `last_30d vs previous_30d`, `2026-03 vs 2026-02`, `2026-Q1 vs 2025-Q4`. When set, `period`, `start_date` and `end_date` are ignored.

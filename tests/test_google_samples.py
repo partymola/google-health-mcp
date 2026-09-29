@@ -147,14 +147,18 @@ class TestCoreTemperature:
         assert row["provider"] == "google"
 
     def test_what_a_reading_lacks_is_stored_as_absent(self, tmp_db, sync):
-        with_location = _sample(
-            "coreBodyTemperature", {"temperatureCelsius": 37.2, "measurementLocation": "EAR"}
+        full = _sample(
+            "coreBodyTemperature",
+            {"temperatureCelsius": 37.2, "measurementLocation": "EAR", "id": "abc"},
         )
+        full["dataSource"] = {"platform": "FICTIONAL"}
         without = _sample("coreBodyTemperature", {"temperatureCelsius": 37.2})
-        sync(google_sync.sync_core_temperature, {"core-body-temperature": [with_location]})
+        sync(google_sync.sync_core_temperature, {"core-body-temperature": [full]})
         sync(google_sync.sync_core_temperature, {"core-body-temperature": [without]})
         (row,) = db.query_core_temperature(tmp_db, "2026-03-15", "2026-03-15")
         assert row["measurement_location"] is None
+        assert row["reading_id"] is None
+        assert row["data_source"] is None
 
     def test_a_reading_with_no_value_is_skipped(self, tmp_db, sync):
         point = _sample("coreBodyTemperature", {"id": "abc"})

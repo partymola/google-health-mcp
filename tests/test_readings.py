@@ -49,7 +49,14 @@ def _body_fat(name="users/me/dataTypes/body-fat/dataPoints/1", percentage=12.5):
 
 
 def _sync(tmp_db, handler, points):
-    with patch.object(google_sync.api, "list_google_data_points", return_value=points):
+    """Answer only the data type the points belong to, so a handler fetching
+    the other one finds nothing."""
+    data_type = "body-fat" if any("bodyFat" in p for p in points) else "weight"
+    with patch.object(
+        google_sync.api,
+        "list_google_data_points",
+        side_effect=lambda t, *_: points if t == data_type else [],
+    ):
         count = handler(tmp_db, date(2026, 3, 1), date(2026, 4, 1))
     tmp_db.commit()
     return count
@@ -78,7 +85,14 @@ class TestEveryReadingIsStoredWhole:
         _sync(
             tmp_db,
             google_sync.sync_weight_readings,
-            [_weigh_in(), _weigh_in(name="users/me/dataTypes/weight/dataPoints/2", grams=12000.0)],
+            [
+                _weigh_in(
+                    name="users/me/dataTypes/weight/dataPoints/2",
+                    grams=12000.0,
+                    civil={**_CIVIL, "time": {"hours": 19, "minutes": 5}},
+                ),
+                _weigh_in(),
+            ],
         )
         rows = db.query_weight_readings(tmp_db, "2026-03-15", "2026-03-15")
         assert [r["record"]["weight"]["weightGrams"] for r in rows] == [12345.0, 12000.0]
@@ -148,8 +162,16 @@ class TestTheTool:
         body, refreshed = await _call(Path(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
         assert body["weight_readings"][0]["record"]["weight"]["weightGrams"] == 12345.0
         assert body["body_fat_readings"][0]["record"]["bodyFat"]["percentage"] == 12.5
+        assert body["count"] == 2
         assert refreshed == {"weight_readings", "body_fat_readings"}
+
+    async def test_body_fat_alone_is_still_an_answer(self, tmp_db):
+        _sync(tmp_db, google_sync.sync_body_fat_readings, [_body_fat()])
+        body, _ = await _call(Path(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+        assert "message" not in body
+        assert body["weight_readings"] == []
+        assert len(body["body_fat_readings"]) == 1
 
     async def test_an_empty_window_says_so(self, tmp_path):
         body, _ = await _call(tmp_path / "empty.db")
-        assert "message" in body
+        assert body["message"] == "No weight or body-fat readings found for this period."

@@ -169,7 +169,7 @@ def _full_exercise():
                 "startTime": "2026-03-15T09:43:50Z",
                 "startUtcOffset": "3600s",
                 "endTime": "2026-03-15T10:10:07Z",
-                "endUtcOffset": "3600s",
+                "endUtcOffset": "7200s",
             },
             "notes": "fictional note",
             "createTime": "2026-03-15T10:11:00Z",
@@ -192,7 +192,7 @@ class TestEverythingElseAWorkoutCarries:
         (row,) = db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")
         assert row["end_time"] == "2026-03-15T10:10:07Z"
         assert row["start_utc_offset"] == "3600s"
-        assert row["end_utc_offset"] == "3600s"
+        assert row["end_utc_offset"] == "7200s"
         assert row["active_seconds"] == 1576.8
         assert row["notes"] == "fictional note"
         assert row["create_time"] == "2026-03-15T10:11:00Z"
@@ -208,11 +208,24 @@ class TestEverythingElseAWorkoutCarries:
         """An id-keyed row withdraws what Google stopped sending, rather than
         keeping an older copy of it."""
         sync([_full_exercise()])
-        sync([_exercise()])
+        bare = _exercise(device=None)
+        bare["exercise"]["interval"] = {"startTime": "2026-03-15T09:43:50Z"}
+        sync([bare])
         (row,) = db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")
-        assert row["splits"] is None
-        assert row["exercise_events"] is None
-        assert row["notes"] is None
+        for column in (
+            "end_time",
+            "start_utc_offset",
+            "end_utc_offset",
+            "notes",
+            "create_time",
+            "update_time",
+            "exercise_metadata",
+            "exercise_events",
+            "splits",
+            "split_summaries",
+            "data_source",
+        ):
+            assert row[column] is None, column
 
     def test_an_empty_array_is_stored_as_absent(self, tmp_db, sync):
         point = _full_exercise()
@@ -272,3 +285,29 @@ class TestTheToolKeepsTheLongArraysBehindAFlag:
         (entry,) = (await _call_exercises(db_path, include_detail=True))["exercises"]
         assert entry["splits"] == [_SPLIT]
         assert len(entry["split_summaries"]) == 2
+        assert entry["detail_counts"]["split_summaries"] == 2
+
+
+async def test_a_workout_with_nothing_stored_counts_null_rather_than_nought(tmp_db):
+    """As health_get_ecg reports an absent trace: none stored is not zero recorded."""
+    from pathlib import Path
+
+    db.save_exercise(tmp_db, "1234567", {"date": "2026-03-15", "name": "Ride"})
+    tmp_db.commit()
+    db_path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    (entry,) = (await _call_exercises(db_path))["exercises"]
+    assert entry["detail_counts"] == {
+        "exercise_events": None,
+        "splits": None,
+        "split_summaries": None,
+    }
+
+
+def test_a_total_of_decimal_calories_carries_no_float_noise(tmp_db):
+    from google_health_mcp.tools.analysis_tools import _trend_exercises
+
+    for i, kcal in enumerate((312.4, 201.7, 100.1)):
+        db.save_exercise(tmp_db, f"log{i}", {"date": "2026-03-15", "calories": kcal})
+    tmp_db.commit()
+    (period,) = _trend_exercises(tmp_db, "2026-03-01", "2026-03-31", "monthly")["periods"]
+    assert period["total_calories"] == 614.2

@@ -357,6 +357,42 @@ class TestWhatTheDailyPointsAlsoCarry:
         )
         assert db.query_heart_rate(tmp_db, "2026-03-15", "2026-03-15") == []
 
+    def test_a_revised_rate_withdraws_the_method_and_source_of_the_old_one(self, tmp_db, stored):
+        """Both describe the reading they came with, so neither may outlive it."""
+        stored(
+            google_sync.sync_heart_rate,
+            [
+                {
+                    "dailyRestingHeartRate": {
+                        **_day(),
+                        "beatsPerMinute": "60",
+                        "dailyRestingHeartRateMetadata": {"calculationMethod": "WITH_SLEEP"},
+                    },
+                    "dataSource": _SOURCE,
+                }
+            ],
+        )
+        stored(
+            google_sync.sync_heart_rate,
+            _points("dailyRestingHeartRate", {"beatsPerMinute": "64"}),
+        )
+        (row,) = db.query_heart_rate(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["resting_hr"] == 64
+        assert row["calculation_method"] is None
+        assert row["data_source"] is None
+
+    def test_metadata_that_is_not_an_object_is_absent_rather_than_fatal(self, tmp_db, stored):
+        stored(
+            google_sync.sync_heart_rate,
+            _points(
+                "dailyRestingHeartRate",
+                {"beatsPerMinute": "60", "dailyRestingHeartRateMetadata": ["WITH_SLEEP"]},
+            ),
+        )
+        (row,) = db.query_heart_rate(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["resting_hr"] == 60
+        assert row["calculation_method"] is None
+
     def test_a_source_alone_writes_no_row(self, tmp_db, stored):
         """Where a point came from is not a measurement of anything."""
         stored(
@@ -483,11 +519,20 @@ class TestNoWriterStampsADayItDidNotMeasure:
         fails without anyone remembering to write it a test."""
         written: list[tuple[str, dict]] = []
         monkeypatch.setattr(db, "_upsert", lambda conn, table, row: written.append((table, row)))
-        # Each point carries a source, which is not a measurement either.
-        points = [
-            {**dated_but_empty(t.field), "dataSource": _SOURCE}
-            for t in google_sync.api.GOOGLE_TYPES.values()
-        ]
+        # Each point carries a source and every qualifier, none of which is a
+        # measurement either.
+        qualifiers = {
+            "dailyRestingHeartRateMetadata": {"calculationMethod": "WITH_SLEEP"},
+            "cardioFitnessLevel": "GOOD",
+            "estimated": True,
+            "vo2MaxCovariance": 1.5,
+        }
+        points = []
+        for t in google_sync.api.GOOGLE_TYPES.values():
+            point = {**dated_but_empty(t.field), "dataSource": _SOURCE}
+            if isinstance(point.get(t.field), dict):
+                point[t.field] = {**point[t.field], **qualifiers}
+            points.append(point)
 
         for name, handler in google_sync.GOOGLE_SYNC_HANDLERS.items():
             written.clear()
@@ -503,7 +548,13 @@ class TestNoWriterStampsADayItDidNotMeasure:
             ):
                 handler(tmp_db, date(2026, 3, 1), date(2026, 4, 1))
             for table, row in written:
-                carried = set(row) - {"provider", "data_source"}
+                # Values rather than names: a qualifier named as None is a
+                # withdrawal, and a row of those still stores nothing.
+                carried = {c for c, v in row.items() if v is not None} - {
+                    "provider",
+                    "data_source",
+                    *google_sync._DAILY_QUALIFIERS,
+                }
                 assert carried - set(db._UPSERT_KEYS[table]), (
                     f"{name} wrote a row into {table} carrying nothing but its key and provider"
                 )

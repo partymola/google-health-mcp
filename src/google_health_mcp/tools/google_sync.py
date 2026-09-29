@@ -46,6 +46,11 @@ def _flag(value) -> int | None:
     return int(value) if isinstance(value, bool) else None
 
 
+def _object(value) -> dict:
+    """A nested JSON object, or an empty one if the field holds anything else."""
+    return value if isinstance(value, dict) else {}
+
+
 def _json(value) -> str | None:
     """An object or array as Google sent it, as JSON text; None for anything else."""
     return json.dumps(value) if isinstance(value, (dict, list)) and value else None
@@ -86,8 +91,8 @@ def _daily_rows(data_type: str, start, end, field: str, build, qualifiers=frozen
 
     `build` returns the columns for one point, or None to skip it. A point
     with no date of its own is skipped rather than guessed at. `qualifiers`
-    name columns that describe a measurement - how it was calculated, how
-    sure it is - and are stored beside one but never make a row on their own.
+    name columns that describe a measurement (how it was calculated, how sure
+    it is): stored beside one, they never make a row on their own.
     """
     for point in api.list_google_data_points(data_type, *_window(start, end)):
         payload = point.get(field)
@@ -107,12 +112,19 @@ def _daily_rows(data_type: str, start, end, field: str, build, qualifiers=frozen
         measured = {name: value for name, value in columns.items() if value is not None}
         if not set(measured) - qualifiers:
             continue
-        # After the check, not before: where a point came from is not a
-        # measurement, and a row holding only its source would claim the day.
-        source = _source(point)
-        if source is not None:
-            measured["data_source"] = source
+        # Named even when absent, and only once a measurement is found: a
+        # qualifier or source describes this point's measurement, so one left
+        # from an earlier point would sit beside a value it does not describe.
+        for name in qualifiers:
+            measured.setdefault(name, None)
+        measured["data_source"] = _source(point)
         yield {"date": day, "provider": PROVIDER, **measured}
+
+
+_HEART_RATE_QUALIFIERS = frozenset({"calculation_method"})
+_CARDIO_QUALIFIERS = frozenset({"cardio_fitness_level", "estimated", "vo2_max_covariance"})
+#: Every column that describes a daily measurement rather than being one.
+_DAILY_QUALIFIERS = _HEART_RATE_QUALIFIERS | _CARDIO_QUALIFIERS
 
 
 def sync_heart_rate(conn, start, end) -> int:
@@ -132,10 +144,10 @@ def sync_heart_rate(conn, start, end) -> int:
         lambda p: {
             "resting_hr": _number(p.get("beatsPerMinute"), int),
             "calculation_method": _text(
-                (p.get("dailyRestingHeartRateMetadata") or {}).get("calculationMethod")
+                _object(p.get("dailyRestingHeartRateMetadata")).get("calculationMethod")
             ),
         },
-        qualifiers=frozenset({"calculation_method"}),
+        qualifiers=_HEART_RATE_QUALIFIERS,
     ):
         db.save_heart_rate_row(conn, row)
         count += 1
@@ -502,8 +514,8 @@ def sync_sleep_sessions(conn, start, end) -> int:
             {
                 "session_id": identifier,
                 "date": night,
-                "start_time": interval.get("startTime"),
-                "end_time": interval.get("endTime"),
+                "start_time": _text(interval.get("startTime")),
+                "end_time": _text(interval.get("endTime")),
                 "record": json.dumps(point),
                 "provider": PROVIDER,
             },
@@ -716,7 +728,7 @@ def sync_exercises(conn, start, end) -> int:
             # Everything else the workout carries, as Google sent it. Written
             # even when absent, as this id-keyed row's other fields are, so a
             # revised workout withdraws what Google stopped sending.
-            "end_time": interval.get("endTime"),
+            "end_time": _text(interval.get("endTime")),
             "start_utc_offset": _text(interval.get("startUtcOffset")),
             "end_utc_offset": _text(interval.get("endUtcOffset")),
             "active_seconds": seconds,
@@ -848,7 +860,7 @@ def sync_cardio_fitness(conn, start, end) -> int:
             "estimated": _flag(p.get("estimated")),
             "vo2_max_covariance": _number(p.get("vo2MaxCovariance"), float),
         },
-        qualifiers=frozenset({"cardio_fitness_level", "estimated", "vo2_max_covariance"}),
+        qualifiers=_CARDIO_QUALIFIERS,
     ):
         db.save_cardio_fitness(conn, row)
         count += 1
