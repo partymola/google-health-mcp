@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.7.0 - 2026-09-29
 
 ### Added
 
@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The first schema migrations: an existing database gains these columns on open. Rows synced before the upgrade keep them empty until a re-sync of their window with `sync --since`.
 - A day's calories burned, a day's food calories and water, and a workout's calories are stored as Google sends them, decimals included, rather than cut to a whole number, so calorie totals in `health_trends` and `health_get_lifetime_stats` carry a decimal too. `health_get_lifetime_stats` rounds its calorie and distance totals to one decimal. Rows synced before the upgrade keep the whole number until their window is re-synced.
 - Body temperature readings are now corrected by a re-sync rather than left as first stored, which is what lets the new fields fill on readings already held, and a synced reading now carries `provider`. A sync reports every body temperature reading it wrote, where it used to count only new ones.
+
 ## 1.6.0 - 2026-09-28
 
 ### Added
