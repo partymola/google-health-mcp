@@ -105,7 +105,7 @@ GOOGLE_TOKEN_LIFETIME = 3600
 # It does NOT drive the sync: both `all` expansions read the handler map, so
 # the order here is the order the help text prints, not the order a sync runs.
 # Trends and compare validate against `_TREND_FNS`, which is deliberately
-# narrower - ECG readings and rhythm alerts are episodes with no daily series.
+# narrower: episodes and per-reading records have no daily series.
 CACHED_DATA_TYPES = (
     "heart_rate",
     "activity",

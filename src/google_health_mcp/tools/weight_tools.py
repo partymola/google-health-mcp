@@ -72,7 +72,7 @@ async def health_get_weight_readings(
         live: If true, re-fetch this window from the API before reading the cache.
 
     Returns weight_readings and body_fat_readings, each entry with reading_id,
-    datetime (local), date, and record (the reading as Google sent it), and
+    datetime (local), date, provider and record (the reading as Google sent it), and
     count, the number of readings of both kinds.
     """
     start, end = parse_date(start_date, end_date, default_days=30)

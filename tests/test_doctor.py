@@ -282,7 +282,7 @@ def test_does_not_flag_a_valid_offline_value(setup_paths, monkeypatch):
 
 
 def test_detects_a_missing_schema_column(setup_paths):
-    """_migrate covers two columns; any other drift must still be reported."""
+    """A column no migration restores must still be reported."""
     _config_dir, db_path = setup_paths
     db_path.parent.mkdir(parents=True)
     conn = db.get_db(db_path)
@@ -597,8 +597,8 @@ def test_a_column_a_migration_would_restore_is_not_reported(setup_paths, monkeyp
     """Reporting a self-healing column attaches the "re-create and re-import"
     remedy, sending a user to destroy a cache that repairs itself on next open.
 
-    There are no migrations yet - a first release has no older database to
-    carry forward - so the excusing has to be driven rather than waited for.
+    The column is declared self-healing here rather than taken from
+    `MIGRATIONS`, so the test holds whatever that list comes to contain.
     """
     _config_dir, db_path = setup_paths
     db_path.parent.mkdir(parents=True)

@@ -84,7 +84,9 @@ async def health_get_sleep_sessions(
             there are, since a night runs to dozens.
 
     Returns one entry per session with session_id, date (the local day it ended),
-    start_time, end_time, and record (the session as Google sent it).
+    start_time, end_time, provider, record (the session as Google sent it, less
+    the segment arrays unless include_stages) and segment_counts (how many of
+    each; absent where the stored record cannot be read).
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 

@@ -29,7 +29,7 @@ async def health_get_heart_rate(
     (Google's WITH_SLEEP or ONLY_WITH_AWAKE_DATA) and data_source (the device and
     platform Google says recorded it).
     Zone data: name, minutes, caloriesOut, max/min HR for each zone. Zones are
-    present only on days that arrived by import; a sync does not write them yet.
+    present only on days that arrived by import; a sync does not write them.
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 

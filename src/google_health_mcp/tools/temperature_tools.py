@@ -81,8 +81,9 @@ async def health_get_core_temperature(
 
     Returns one entry per logged reading with datetime (YYYY-MM-DDThh:mm:ss),
     temp_celsius, measurement_location (where it was taken, e.g. "MOUTH" or
-    "EAR", as logged), reading_id and data_source. A reading whose value was
-    edited in the app appears twice, once per value, under the same reading_id.
+    "EAR", as logged), reading_id and data_source. A reading whose value is
+    changed in the app is kept beside its earlier value rather than replacing
+    it, so two readings logged at the same datetime may be one reading, edited.
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 

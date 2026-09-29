@@ -38,11 +38,14 @@ async def health_get_exercises(
         live: If true, re-fetch this window from the API before reading the cache.
         include_detail: If true, include every exercise event (start, pause, stop),
             split and split summary. Without it each entry carries only how many
-            there are (detail_counts), null where none is stored.
+            there are (detail_counts), null where none is stored: an imported
+            workout, one Google sent none for, one synced before these were
+            fetched, or a stored value that cannot be read.
 
     Returns exercise entries with name, duration, calories, avg heart rate,
-    distance, and source (the recording device's name; data_source.recordingMethod
-    says whether it was logged by hand), and for a synced workout also
+    distance, and source (for a synced workout the recording device's name, and
+    data_source.recordingMethod says whether it was logged by hand; for an
+    imported one whatever the import carried), and for a synced workout also
     start and end times with their UTC offsets, active_seconds, notes, Google's
     metrics_summary whole (pace, speed, elevation, heart-rate zone durations,
     mobility), exercise_metadata (hasGps, pool length) and data_source.

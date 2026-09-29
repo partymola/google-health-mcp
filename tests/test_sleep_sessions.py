@@ -1,8 +1,8 @@
 """Each sleep session, stored whole as Google sent it.
 
-The nightly `sleep` row sums a night's sessions and keeps the stage totals;
-everything else a session carries - every stage segment, short awakenings,
-out-of-bed segments, Google's own metadata and summary - arrives only here.
+The nightly `sleep` row sums a night's sessions and keeps the stage totals.
+Everything else a session carries arrives only here: every stage segment,
+short awakening and out-of-bed segment, and Google's own metadata and summary.
 Nothing in a session is computed: the record is the point as it came.
 """
 

@@ -289,7 +289,7 @@ class TestTheToolKeepsTheLongArraysBehindAFlag:
 
 
 async def test_a_workout_with_nothing_stored_counts_null_rather_than_nought(tmp_db):
-    """As health_get_ecg reports an absent trace: none stored is not zero recorded."""
+    """As health_get_ecg reports an absent trace: none stored is not a count of zero."""
     from pathlib import Path
 
     db.save_exercise(tmp_db, "1234567", {"date": "2026-03-15", "name": "Ride"})

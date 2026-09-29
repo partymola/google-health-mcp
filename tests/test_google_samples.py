@@ -134,8 +134,8 @@ class TestCoreTemperature:
         assert row["provider"] == "google"
 
     def test_a_re_sync_fills_a_reading_stored_before_those_fields_were(self, tmp_db, sync):
-        """The old writer ignored a reading it already held, so the new
-        columns would have stayed empty on every existing row."""
+        """A reading already held is corrected, not ignored, so its new
+        columns fill on the next sync of its window."""
         db.save_core_temperature(
             tmp_db, {"datetime": "2026-03-15T11:39:50", "date": "2026-03-15", "temp_celsius": 37.2}
         )

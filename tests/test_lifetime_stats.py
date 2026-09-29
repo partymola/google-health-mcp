@@ -41,7 +41,7 @@ class TestTheTotals:
         assert result["coverage"]["days"] == 2
 
     def test_a_total_of_decimal_calories_is_summed_exactly(self, tmp_db):
-        """SQLite's SUM compensates for float error, which Python's sum does not."""
+        """SQLite's SUM compensates for float error, which a naive accumulation does not."""
         for day, kcal in (("2026-03-10", 2508.9), ("2026-03-11", 2100.7), ("2026-03-12", 1.1)):
             _day(tmp_db, day, calories_out=kcal)
         tmp_db.commit()
