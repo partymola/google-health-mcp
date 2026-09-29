@@ -86,8 +86,10 @@ class TestEveryReadingIsStoredWhole:
             tmp_db,
             google_sync.sync_weight_readings,
             [
+                # Named to sort before the morning reading, so an order by id
+                # and an order by time disagree.
                 _weigh_in(
-                    name="users/me/dataTypes/weight/dataPoints/2",
+                    name="users/me/dataTypes/weight/dataPoints/0",
                     grams=12000.0,
                     civil={**_CIVIL, "time": {"hours": 19, "minutes": 5}},
                 ),
@@ -102,15 +104,21 @@ class TestEveryReadingIsStoredWhole:
         _sync(tmp_db, google_sync.sync_weight_readings, [_weigh_in()])
         assert db.query_weight(tmp_db, "2026-03-15", "2026-03-15") == []
 
+    def test_the_daily_sync_leaves_the_readings_alone(self, tmp_db):
+        _sync(tmp_db, google_sync.sync_weight, [_weigh_in()])
+        assert db.query_weight(tmp_db, "2026-03-15", "2026-03-15") != []
+        assert db.query_weight_readings(tmp_db, "2026-03-15", "2026-03-15") == []
+
     @pytest.mark.parametrize(
         "point",
         [
             {**_weigh_in(), "name": None},
+            {**_weigh_in(), "name": ""},
             {**_weigh_in(), "name": 3},
             {"name": "users/me/dataTypes/weight/dataPoints/1", "weight": "not an object"},
             _weigh_in(civil={}),
         ],
-        ids=["no-name", "numeric-name", "no-reading", "no-time"],
+        ids=["no-name", "empty-name", "numeric-name", "no-reading", "no-time"],
     )
     def test_a_reading_that_cannot_be_keyed_or_dated_is_skipped(self, tmp_db, point):
         assert _sync(tmp_db, google_sync.sync_weight_readings, [point]) == 0
@@ -171,6 +179,7 @@ class TestTheTool:
         assert "message" not in body
         assert body["weight_readings"] == []
         assert len(body["body_fat_readings"]) == 1
+        assert body["count"] == 1
 
     async def test_an_empty_window_says_so(self, tmp_path):
         body, _ = await _call(tmp_path / "empty.db")

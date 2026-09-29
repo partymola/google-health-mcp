@@ -96,11 +96,12 @@ class TestEachSessionIsStoredWhole:
         "point",
         [
             {**_session(), "name": None},
+            {**_session(), "name": ""},
             {**_session(), "name": 7},
             {"name": "users/me/dataTypes/sleep/dataPoints/1", "sleep": "not an object"},
             {**_session(), "sleep": {**_session()["sleep"], "interval": {}}},
         ],
-        ids=["no-name", "numeric-name", "no-session", "no-end"],
+        ids=["no-name", "empty-name", "numeric-name", "no-session", "no-end"],
     )
     def test_a_session_that_cannot_be_keyed_or_dated_is_skipped(self, tmp_db, point):
         assert _sync(tmp_db, [point]) == 0
@@ -146,8 +147,8 @@ class TestTheTool:
         """Dozens of segments a night is a large answer to an ordinary question."""
         body = await _call(db_path)
         (session,) = body["sleep_sessions"]
-        assert "stages" not in session["record"]["sleep"]
-        assert "shortAwakenings" not in session["record"]["sleep"]
+        for key in ("stages", "shortAwakenings", "outOfBedSegments"):
+            assert key not in session["record"]["sleep"]
         assert session["segment_counts"] == {
             "stages": 2,
             "shortAwakenings": 1,
@@ -161,7 +162,18 @@ class TestTheTool:
         assert session["record"]["sleep"]["stages"][1]["type"] == "DEEP"
         assert session["record"]["sleep"]["outOfBedSegments"] == []
 
-    async def test_an_unreadable_record_is_returned_rather_than_failing_the_window(self, tmp_db):
+    async def test_an_array_the_session_lacks_counts_as_none(self, tmp_db):
+        """The record is the point as sent, so an absent array is none recorded."""
+        point = _session()
+        del point["sleep"]["outOfBedSegments"]
+        _sync(tmp_db, [point])
+        body = await _call(Path(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+        (session,) = body["sleep_sessions"]
+        assert session["segment_counts"]["outOfBedSegments"] == 0
+
+    async def test_a_session_with_no_record_is_returned_rather_than_failing_the_window(
+        self, tmp_db
+    ):
         db.save_sleep_session(
             tmp_db, {"session_id": "users/me/dataTypes/sleep/dataPoints/9", "date": "2026-03-15"}
         )

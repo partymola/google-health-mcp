@@ -210,12 +210,16 @@ class TestEverythingElseAWorkoutCarries:
         sync([_full_exercise()])
         bare = _exercise(device=None)
         bare["exercise"]["interval"] = {"startTime": "2026-03-15T09:43:50Z"}
+        del bare["exercise"]["metricsSummary"]
+        del bare["exercise"]["activeDuration"]
         sync([bare])
         (row,) = db.query_exercises(tmp_db, "2026-03-01", "2026-04-01")
         for column in (
             "end_time",
             "start_utc_offset",
             "end_utc_offset",
+            "active_seconds",
+            "metrics_summary",
             "notes",
             "create_time",
             "update_time",

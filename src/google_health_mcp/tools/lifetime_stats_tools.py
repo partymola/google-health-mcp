@@ -21,6 +21,9 @@ def lifetime_from_cache(conn) -> dict:
             ).fetchone(),
         )
     )
+    # Summed as floats, so rounded as the trend totals are.
+    for column in ("distance_km", "calories_out"):
+        totals[column] = round(totals[column], 1)
 
     best = {}
     for column in _RANKED:

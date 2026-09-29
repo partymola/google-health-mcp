@@ -146,6 +146,14 @@ class TestCoreTemperature:
         assert row["reading_id"] == "abc"
         assert row["provider"] == "google"
 
+    def test_a_changed_value_is_kept_beside_the_earlier_one(self, tmp_db, sync):
+        """The value is part of the key, and a sync never removes a row."""
+        for celsius in (39.8, 36.8):
+            point = _sample("coreBodyTemperature", {"temperatureCelsius": celsius, "id": "abc"})
+            sync(google_sync.sync_core_temperature, {"core-body-temperature": [point]})
+        rows = db.query_core_temperature(tmp_db, "2026-03-15", "2026-03-15")
+        assert sorted(r["temp_celsius"] for r in rows) == [36.8, 39.8]
+
     def test_what_a_reading_lacks_is_stored_as_absent(self, tmp_db, sync):
         full = _sample(
             "coreBodyTemperature",
