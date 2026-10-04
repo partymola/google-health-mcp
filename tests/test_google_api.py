@@ -15,12 +15,21 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from google_health_mcp import api, config
+from google_health_mcp.errors import GoogleHealthError
 
 
 @pytest.fixture(autouse=True)
 def _a_token_without_the_network(monkeypatch):
     monkeypatch.setattr(api, "refresh_google_token", lambda: "fake-access-token")
     monkeypatch.setattr(config, "OFFLINE_MODE", False)
+
+
+@pytest.fixture(autouse=True)
+def waits(monkeypatch):
+    """Every sleep in the process, recorded instead of slept: `api.time` is the shared module."""
+    recorded = []
+    monkeypatch.setattr(api.time, "sleep", recorded.append)
+    return recorded
 
 
 def _page(points, token=None):
@@ -34,10 +43,31 @@ def _page(points, token=None):
     return resp
 
 
-def _http_error(code, body=b"{}"):
-    err = urllib.error.HTTPError("https://health.googleapis.com/v4/x", code, "err", {}, None)
+def _http_error(code, body=b"{}", headers=None):
+    err = urllib.error.HTTPError(
+        "https://health.googleapis.com/v4/x", code, "err", headers or {}, None
+    )
     err.read = lambda: body
     return err
+
+
+def _recording(answers):
+    """An urlopen that notes what each attempt sent at the moment it was sent.
+
+    `google_get` sends one Request object on every attempt, so reading
+    `call_args_list` afterwards shows only that object's final state.
+    """
+    sent = []
+    queue = list(answers)
+
+    def urlopen(req, timeout=None):
+        sent.append((req.full_url, req.get_header("Authorization"), req.data))
+        answer = queue.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return urlopen, sent
 
 
 def _requested_urls(mock):
@@ -404,11 +434,14 @@ class TestFailures:
         ],
         ids=["timeout", "unreachable", "reset", "cut-off"],
     )
-    def test_a_request_with_no_answer_is_a_network_error(self, failure):
-        """The route sync leaves one workout's failure out and stops on this one."""
-        with patch("urllib.request.urlopen", side_effect=failure):
+    def test_a_request_with_no_answer_is_a_network_error(self, failure, waits):
+        """The route sync leaves one workout's failure out and stops on this one,
+        and it is not retried, since the next request would fare the same."""
+        with patch("urllib.request.urlopen", side_effect=failure) as m:
             with pytest.raises(api.HealthNetworkError):
                 api.google_get("users/me/profile", {})
+        assert m.call_count == 1
+        assert waits == []
 
     def test_a_response_cut_off_while_reading_is_a_network_error(self):
         response = MagicMock()
@@ -453,6 +486,113 @@ class TestFailures:
             with pytest.raises(ValueError, match="not-a-type"):
                 api.list_google_data_points("not-a-type", date(2026, 3, 1), date(2026, 3, 2))
         assert not m.called
+
+
+class TestAServerErrorIsRetried:
+    """A request answered with 500, 502 or 503 is sent again before the error is reported.
+
+    Every request here is a read, so repeating one is safe. One that keeps
+    failing past the last wait raises exactly what it raised before, so an
+    outage is still reported as one.
+    """
+
+    @pytest.mark.parametrize("code", [500, 502, 503])
+    def test_a_one_off_server_error_does_not_fail_the_request(self, code, waits):
+        """Mid-walk, so the retried request is the one carrying a page token."""
+        urlopen, sent = _recording(
+            [
+                _page([{"steps": {"count": 7}}], token="TOK1"),
+                _http_error(code),
+                _page([{"steps": {"count": 8}}]),
+            ]
+        )
+        with patch("urllib.request.urlopen", side_effect=urlopen):
+            points = api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
+        assert points == [{"steps": {"count": 7}}, {"steps": {"count": 8}}]
+        assert len(sent) == 3
+        assert sent[2] == sent[1]
+        assert "pageToken=TOK1" in sent[2][0]
+        assert sent[2][1] == "Bearer fake-access-token"
+        assert waits == [api.SERVER_ERROR_WAITS[0]]
+
+    def test_a_request_outside_the_data_points_is_retried_too(self, waits):
+        """`auth`'s account check reads the paired devices through the same path."""
+        resp = MagicMock()
+        resp.read.return_value = json.dumps({"pairedDevices": [{"id": "d1"}]}).encode()
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda *a: None
+        urlopen, sent = _recording([_http_error(503), resp])
+        with patch("urllib.request.urlopen", side_effect=urlopen):
+            assert api.list_paired_devices() == [{"id": "d1"}]
+        assert len(sent) == 2
+        assert sent[1] == sent[0]
+        assert waits == [api.SERVER_ERROR_WAITS[0]]
+
+    def test_a_server_error_that_persists_still_fails_as_before(self, monkeypatch, waits):
+        """No wait after the last attempt: it would only delay the failure."""
+        monkeypatch.setattr(api, "SERVER_ERROR_WAITS", (1, 2))
+        with patch("urllib.request.urlopen", side_effect=_http_error(503)) as m:
+            with pytest.raises(api.HealthAPIError) as caught:
+                api.list_google_data_points("steps", date(2026, 3, 1), date(2026, 3, 2))
+        assert type(caught.value) is api.HealthAPIError
+        assert str(caught.value) == "API error 503 for steps list"
+        assert m.call_count == 3
+        assert waits == [1, 2]
+
+    @pytest.mark.parametrize("code", [400, 401, 403, 404, 429, 501, 504])
+    def test_any_other_error_status_is_not_asked_again(self, code, waits):
+        """A 504 is retried with a smaller page only while listing, and a 429 reports its wait."""
+        with patch("urllib.request.urlopen", side_effect=_http_error(code)) as m:
+            with pytest.raises(GoogleHealthError):
+                api.google_get("users/me/profile", {})
+        assert m.call_count == 1
+        assert waits == []
+
+    def test_a_rollup_is_sent_again_with_its_body(self, waits):
+        resp = MagicMock()
+        resp.read.return_value = json.dumps({"rollupDataPoints": [{"floors": {}}]}).encode()
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda *a: None
+        urlopen, sent = _recording([_http_error(503), resp])
+        with patch("urllib.request.urlopen", side_effect=urlopen):
+            points = api.daily_roll_up("floors", date(2026, 3, 1), date(2026, 3, 2))
+        assert points == [{"floors": {}}]
+        assert sent[1] == sent[0]
+        assert json.loads(sent[1][2])["range"]["start"] == {
+            "date": {"year": 2026, "month": 3, "day": 1}
+        }
+
+    @pytest.mark.parametrize("asked", ["3600", "0"])
+    def test_a_retry_after_header_does_not_change_the_wait(self, asked, waits):
+        """Only the configured waits are slept, whatever the server asks for."""
+        error = _http_error(503, headers={"Retry-After": asked})
+        with patch("urllib.request.urlopen", side_effect=error):
+            with pytest.raises(api.HealthAPIError):
+                api.google_get("users/me/profile", {})
+        assert waits == list(api.SERVER_ERROR_WAITS)
+
+    def test_the_waits_back_off_and_stay_short(self):
+        """The wait happens on the thread serving a tool call."""
+        configured = api.SERVER_ERROR_WAITS
+        assert configured and all(w > 0 for w in configured)
+        assert all(a < b for a, b in zip(configured, configured[1:]))
+        assert sum(configured) < 60
+
+    def test_each_retry_is_logged_without_a_resource_name(self, caplog, monkeypatch):
+        """The log is the only record that a retry happened, and a resource
+        name carries the account's user id."""
+        monkeypatch.setattr(api, "SERVER_ERROR_WAITS", (5,))
+        name = "users/1234567890123456789/dataTypes/exercise/dataPoints/42"
+        resp = MagicMock()
+        resp.read.return_value = json.dumps({"tcxData": "<x/>"}).encode()
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda *a: None
+        with caplog.at_level("INFO", logger=api.__name__):
+            with patch("urllib.request.urlopen", side_effect=[_http_error(503), resp]):
+                api.export_exercise_tcx(name)
+        assert [r.getMessage() for r in caplog.records] == [
+            "Google answered 503 for exercise exportExerciseTcx; retrying in 5s"
+        ]
 
 
 class TestTheTokenLayerIsClassified:

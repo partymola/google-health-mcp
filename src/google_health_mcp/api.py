@@ -101,6 +101,12 @@ def _reset_seconds(error) -> int:
     return min(seconds, MAX_RATE_LIMIT_WAIT)
 
 
+#: Seconds to wait before asking again after a 500, 502 or 503. Every request
+#: here is a read, so repeating one is safe; the total is kept short because
+#: the wait happens on the thread serving a tool call.
+SERVER_ERROR_WAITS = (1, 2, 4)
+
+
 class HealthAPIError(GoogleHealthError):
     """General API error."""
 
@@ -305,11 +311,13 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
     """One authenticated request against the Google Health API.
 
     A body makes it the POST the rollup methods require; without one it is a
-    GET with the params in the query string.
+    GET with the params in the query string. A request answered with 500, 502
+    or 503 is sent again after each of `SERVER_ERROR_WAITS` before the error
+    is reported.
 
-    Mirrors `get` above: the same two-type classification out of the token
-    layer, the same read-then-parse split so an unreadable body is reported
-    rather than escaping, and no response content in any message.
+    The token layer's two failure types are mapped to two different errors, the
+    body is read and parsed in separate steps so an unreadable one is reported
+    rather than escaping, and no response content reaches any message.
     """
     if config.OFFLINE_MODE:
         raise HealthOfflineError(
@@ -334,24 +342,33 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
         payload = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=payload, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 429:
-            raise HealthRateLimitError(_reset_seconds(e)) from e
-        if e.code in (401, 403):
-            raise _classify_google_api_error(e) from e
-        if e.code == 504:
-            raise GoogleGatewayTimeout("Google timed out serving the request.") from e
-        if e.code == 400 and _is_account_not_linked(e):
-            raise AccountNotLinked(ACCOUNT_NOT_LINKED_MESSAGE) from e
-        raise HealthAPIError(f"API error {e.code} for {_operation(path)}") from e
-    except (OSError, http.client.HTTPException) as e:
-        # A timeout, a refused or reset connection, a failed lookup, or a
-        # response cut off mid-read: no usable answer, so the next request
-        # would fare the same.
-        raise HealthNetworkError("Network error. Check your connection.") from e
+    # The trailing None is the last attempt, whose server error is reported.
+    for wait in (*SERVER_ERROR_WAITS, None):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in (500, 502, 503) and wait is not None:
+                logger.info(
+                    "Google answered %d for %s; retrying in %gs", e.code, _operation(path), wait
+                )
+                time.sleep(wait)
+                continue
+            if e.code == 429:
+                raise HealthRateLimitError(_reset_seconds(e)) from e
+            if e.code in (401, 403):
+                raise _classify_google_api_error(e) from e
+            if e.code == 504:
+                raise GoogleGatewayTimeout("Google timed out serving the request.") from e
+            if e.code == 400 and _is_account_not_linked(e):
+                raise AccountNotLinked(ACCOUNT_NOT_LINKED_MESSAGE) from e
+            raise HealthAPIError(f"API error {e.code} for {_operation(path)}") from e
+        except (OSError, http.client.HTTPException) as e:
+            # A timeout, a refused or reset connection, a failed lookup, or a
+            # response cut off mid-read: no usable answer, so the next request
+            # would fare the same.
+            raise HealthNetworkError("Network error. Check your connection.") from e
 
     try:
         body = json.loads(raw)

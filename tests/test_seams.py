@@ -66,7 +66,12 @@ def test_no_logger_call_in_shared_code_carries_a_path():
             ):
                 continue
             for arg in node.args + [kw.value for kw in node.keywords]:
-                if any(name in ast.unparse(arg) for name in _PATH_NAMES):
+                text = ast.unparse(arg)
+                if source.name == "api.py":
+                    # Its `_operation` reduces a request path to a data type and
+                    # method, which is what every error message here carries.
+                    text = re.sub(r"\b_operation\([^()]*\)", "", text)
+                if any(name in text for name in _PATH_NAMES):
                     offenders.append(f"{source.name}:{node.lineno} {ast.unparse(node)}")
     assert not offenders, f"log line carries a path: {offenders}"
 
