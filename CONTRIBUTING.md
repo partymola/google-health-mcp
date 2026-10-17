@@ -23,13 +23,13 @@ Command lines here assume a POSIX shell. On Windows the interpreter is `.venv\Sc
 
 ### Install the pre-commit hook
 
-The repo ships with `scripts/check-no-data.sh`, which blocks commits that contain databases, tokens, or other secrets:
+The repo ships with `scripts/check-no-data.sh`, which blocks commits that stage database or backup files, files under `config/` other than `.gitkeep` and examples, or large files:
 
 ```bash
 ln -sf ../../scripts/check-no-data.sh .git/hooks/pre-commit
 ```
 
-Please install it before your first commit.
+Please install it before your first commit. It does not read file contents, so it cannot catch a secret pasted into code.
 
 ### Run the test suite
 
