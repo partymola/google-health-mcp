@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+import zlib
 from collections.abc import Sequence
 from contextlib import closing
 from datetime import datetime, timezone
@@ -365,6 +366,25 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "authorisation": ("id",),
 }
 
+#: The text column each table stores zlib-compressed, as a BLOB in a column
+#: declared TEXT: kilobytes a row, and hundreds for a route. The declaration
+#: stays TEXT because MIGRATIONS can only add columns. Readers inflate with
+#: `_unpacked`, which also passes through the text an earlier release stored.
+_PACKED_COLUMNS: dict[str, str] = {
+    "exercise_routes": "tcx",
+    "sleep_sessions": "record",
+}
+
+
+def _unpacked(value):
+    """A packed column's text, or None if a packed value will not inflate."""
+    if not isinstance(value, bytes):
+        return value
+    try:
+        return zlib.decompress(value).decode()
+    except (zlib.error, UnicodeDecodeError):
+        return None
+
 
 def _upsert(conn: sqlite3.Connection, table: str, row: dict) -> None:
     """Write `row`, leaving the columns it does not name as they were.
@@ -373,6 +393,9 @@ def _upsert(conn: sqlite3.Connection, table: str, row: dict) -> None:
     The second writes NULL, which is how a value a provider has withdrawn
     gets cleared.
     """
+    packed = _PACKED_COLUMNS.get(table)
+    if isinstance(row.get(packed), str):
+        row = {**row, packed: zlib.compress(row[packed].encode())}
     keys = _UPSERT_KEYS[table]
     known = {r[1] for r in conn.execute(f"PRAGMA table_info('{table}')")}
     unknown = sorted(set(row) - known)
@@ -522,6 +545,36 @@ def record_missing_scopes(conn: sqlite3.Connection, missing: list[str] | None):
         },
     )
     conn.commit()
+
+
+def compact(conn: sqlite3.Connection) -> int:
+    """Pack what an earlier release stored as text, and give free space back.
+
+    Returns how many values were packed. Run only where the cache is written,
+    since VACUUM rewrites the whole file. It runs after anything is packed,
+    and whenever a quarter of the file is free pages, so a VACUUM refused
+    because another connection held the file is retried once that much is.
+    """
+    count = 0
+    for table, column in _PACKED_COLUMNS.items():
+        (key,) = _UPSERT_KEYS[table]
+        unpacked = conn.execute(
+            f"SELECT {key} FROM {table} WHERE typeof({column}) = 'text'"
+        ).fetchall()
+        for (identifier,) in unpacked:
+            # Read one at a time: a route can run to megabytes. `date` is named
+            # because an upsert checks NOT NULL before it finds the conflict.
+            day, text = conn.execute(
+                f"SELECT date, {column} FROM {table} WHERE {key} = ?", (identifier,)
+            ).fetchone()
+            _upsert(conn, table, {key: identifier, "date": day, column: text})
+            count += 1
+    conn.commit()
+
+    free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    if count or free * 4 >= conn.execute("PRAGMA page_count").fetchone()[0] > 0:
+        conn.execute("VACUUM")
+    return count
 
 
 def open_readonly(path: Path) -> closing:
@@ -884,7 +937,11 @@ def query_height(conn: sqlite3.Connection, start_date: str, end_date: str) -> li
 
 def query_exercise_route(conn: sqlite3.Connection, log_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM exercise_routes WHERE log_id = ?", (log_id,)).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    route = dict(row)
+    route["tcx"] = _unpacked(route["tcx"])
+    return route
 
 
 def route_ids(conn: sqlite3.Connection) -> set[str]:
@@ -901,7 +958,7 @@ def query_sleep_sessions(conn: sqlite3.Connection, start_date: str, end_date: st
     sessions = []
     for row in rows:
         session = dict(row)
-        session["record"] = _decoded(session["record"])
+        session["record"] = _decoded(_unpacked(session["record"]))
         sessions.append(session)
     return sessions
 

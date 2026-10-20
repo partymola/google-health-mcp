@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Exercise routes and sleep sessions are stored compressed. They take up most of a cache that holds many GPS workouts. What the tools return is unchanged.
+- A cache written by an earlier release keeps working as it is. The first sync after upgrading compresses the routes and sessions it already holds. It then rewrites the file to give the freed space back. This happens once, and only on a host that syncs. A cache-only host (`GOOGLE_HEALTH_MCP_OFFLINE`) never rewrites the cache.
+- **On a multi-host setup, upgrade the cache-only hosts first, then the syncing host.** An earlier release cannot read the compressed values. Its `health_get_sleep_sessions` fails on them. Its `health_get_exercise_route` returns unreadable text with `include_tcx`. Nothing converts a cache back to the old storage.
+
 ## 1.8.0 - 2026-10-04
 
 ### Changed

@@ -208,6 +208,16 @@ def _run_sync_types(conn, data_types, results, since_date, until_date, today, da
             db.record_missing_scopes(conn, found)
     except Exception:
         logger.error("Could not record the grant's missing scopes")
+
+    # Here rather than on open: every host opens the cache, and only the one
+    # that syncs may rewrite it.
+    if not config.OFFLINE_MODE:
+        try:
+            packed = db.compact(conn)
+            if packed:
+                logger.info("Compressed %d stored route(s) and sleep session(s)", packed)
+        except Exception as e:
+            logger.warning("Could not compact the cache: %s", type(e).__name__)
     return results
 
 
