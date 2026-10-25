@@ -667,14 +667,9 @@ class TestAgainstTheRealGoogleRefresh:
         # and it is the one thing this class must not have.
         monkeypatch.setattr(api, "refresh_google_token", auth.refresh_google_token)
         monkeypatch.setattr(config, "OFFLINE_MODE", False)
-        monkeypatch.setattr(auth, "_cached_google_tokens", None)
-        monkeypatch.setattr(auth, "_cached_google_client", None)
         monkeypatch.setattr(config, "GOOGLE_TOKENS_PATH", tmp_path / "google_tokens.json")
         monkeypatch.setattr(config, "GOOGLE_CLIENT_PATH", tmp_path / "google_client.json")
         self.dir = tmp_path
-        yield
-        auth._cached_google_tokens = None
-        auth._cached_google_client = None
 
     def _list_with_token_file(self, contents):
         if contents is not None:

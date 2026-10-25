@@ -91,29 +91,29 @@ class TestSaveLoadJson:
 
 
 class TestRefreshToken:
-    """The cache short-circuit, which is what keeps a sync off the token endpoint."""
+    """The expiry short-circuit, which is what keeps a sync off the token endpoint."""
 
     @pytest.fixture(autouse=True)
-    def _restore_the_cache(self, monkeypatch):
-        import google_health_mcp.auth as auth
+    def _credential_files(self, monkeypatch, tmp_path):
+        from google_health_mcp import config
 
-        monkeypatch.setattr(auth, "_cached_google_client", {"client_id": "fictional-client"})
-        yield
-        auth._cached_google_tokens = None
-        auth._cached_google_client = None
+        monkeypatch.setattr(config, "GOOGLE_TOKENS_PATH", tmp_path / "google_tokens.json")
+        monkeypatch.setattr(config, "GOOGLE_CLIENT_PATH", tmp_path / "google_client.json")
+        config.GOOGLE_CLIENT_PATH.write_text(
+            json.dumps({"installed": {"client_id": "fictional-client"}})
+        )
+        self.tokens = config.GOOGLE_TOKENS_PATH
 
-    def test_returns_cached_if_not_expired(self, monkeypatch):
+    def test_returns_the_stored_token_if_not_expired(self, monkeypatch):
         """An unexpired token is returned without reaching the network at all."""
-        import google_health_mcp.auth as auth
-
-        monkeypatch.setattr(
-            auth,
-            "_cached_google_tokens",
-            {
-                "access_token": "valid_token",
-                "refresh_token": "refresh_abc",
-                "expires_at": time.time() + 3600,
-            },
+        self.tokens.write_text(
+            json.dumps(
+                {
+                    "access_token": "valid_token",
+                    "refresh_token": "refresh_abc",
+                    "expires_at": time.time() + 3600,
+                }
+            )
         )
         monkeypatch.setattr(
             auth.urllib.request, "urlopen", _refuse_the_network("refresh with a live token")
@@ -121,39 +121,35 @@ class TestRefreshToken:
 
         assert refresh_google_token() == "valid_token"
 
-    def test_a_token_inside_the_buffer_is_refreshed_rather_than_served(self, monkeypatch):
+    def test_a_token_inside_the_buffer_is_refreshed_rather_than_served(self):
         """Expiring in two minutes is treated as expired.
 
         Without the buffer a token can pass the check and be rejected by the
         time the request lands, which surfaces as an auth failure on a
         credential that was fine.
         """
-        import google_health_mcp.auth as auth
-
-        monkeypatch.setattr(
-            auth,
-            "_cached_google_tokens",
-            {
-                "access_token": "nearly_stale",
-                "refresh_token": "",
-                "expires_at": time.time() + 120,
-            },
+        self.tokens.write_text(
+            json.dumps(
+                {
+                    "access_token": "nearly_stale",
+                    "refresh_token": "",
+                    "expires_at": time.time() + 120,
+                }
+            )
         )
 
         with pytest.raises(RuntimeError, match="refresh token"):
             refresh_google_token()
 
-    def test_raises_if_no_refresh_token(self, monkeypatch):
-        import google_health_mcp.auth as auth
-
-        monkeypatch.setattr(
-            auth,
-            "_cached_google_tokens",
-            {
-                "access_token": "expired_token",
-                "refresh_token": "",
-                "expires_at": time.time() - 600,
-            },
+    def test_raises_if_no_refresh_token(self):
+        self.tokens.write_text(
+            json.dumps(
+                {
+                    "access_token": "expired_token",
+                    "refresh_token": "",
+                    "expires_at": time.time() - 600,
+                }
+            )
         )
 
         with pytest.raises(RuntimeError, match="refresh token"):

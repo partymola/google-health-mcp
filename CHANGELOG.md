@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A running server now picks up the tokens written by `google-health-mcp auth` without a restart. It read the token and client files once and kept using those copies. While the OAuth app is in Testing, a refresh token expires after a week. Re-authorising did not help a running server: it kept sending the expired token, so every request failed until a restart.
+- A running server no longer undoes a new consent. When its access token next expired, it refreshed with the grant it had first read. It then saved that old grant over the new one. A consent that added permissions could be lost within the hour.
+- A token refresh no longer saves over a token file that changed while its request to Google was in flight. The server uses the file's token if it is still valid.
+- A refused refresh is no longer reported as needing `google-health-mcp auth` when the token file changed meanwhile. The server uses the new token if it is still valid. Otherwise it reports a network error, and the next call refreshes from the new file. A sync records that as an error, which `doctor` grades as a warning rather than a failure.
+
 ## 1.9.0 - 2026-10-20
 
 ### Changed

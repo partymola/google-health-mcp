@@ -6,9 +6,12 @@ exception type would reach code that has no branch for it.
 """
 
 import json
+import os
+import threading
 import time
 import urllib.error
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -17,11 +20,9 @@ from google_health_mcp import auth, config
 
 @pytest.fixture(autouse=True)
 def _isolate_google_state(monkeypatch, tmp_path):
-    """No test may read the developer's real client file or token cache."""
+    """No test may read the developer's real client file or token file."""
     monkeypatch.setattr(config, "GOOGLE_CLIENT_PATH", tmp_path / "google_client.json")
     monkeypatch.setattr(config, "GOOGLE_TOKENS_PATH", tmp_path / "google_tokens.json")
-    monkeypatch.setattr(auth, "_cached_google_tokens", None)
-    monkeypatch.setattr(auth, "_cached_google_client", None)
 
 
 def _write_client(tmp_path, **overrides):
@@ -265,6 +266,250 @@ class TestWhatARefreshStores:
                 auth.refresh_google_token()
 
 
+class TestTheTokenFileIsTheOnlyCopy:
+    """`google-health-mcp auth` runs in another process while the server runs.
+
+    Each test writes real files at the paths the fixture above points `config`
+    at, because the property is about what is on disk, not about anything the
+    module holds.
+    """
+
+    _respond = TestWhatARefreshStores._respond
+
+    @staticmethod
+    def _rewrite_unnoticeably(path, text):
+        """Same length and mtime as before, so only the content says it changed.
+
+        A cache keyed on size or modification time would serve the old copy;
+        mtime resolution is coarse on some filesystems, so it can miss a real
+        rewrite.
+        """
+        before = path.stat()
+        assert len(path.read_text()) == len(text)
+        path.write_text(text)
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    def _urlopen_writing(self, tmp_path, then, raw=None, **tokens):
+        """An urlopen that rewrites the token file mid-request, then answers.
+
+        `raw` is written as the file's text; otherwise `tokens` override the
+        default token fields.
+        """
+
+        def urlopen(request, timeout=None):
+            if raw is not None:
+                (tmp_path / "google_tokens.json").write_text(raw)
+            else:
+                _write_tokens(tmp_path, **tokens)
+            if isinstance(then, Exception):
+                raise then
+            return self._respond(then)
+
+        return urlopen
+
+    def test_a_token_written_by_auth_is_used_without_a_restart(self, tmp_path):
+        """Held in memory, the old grant stays in use after `auth` until a
+        restart, which after a Testing-mode expiry means a dead refresh token."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, access_token="token_aaaa", expires_at=time.time() + 3600)
+        assert auth.refresh_google_token() == "token_aaaa"
+        path = tmp_path / "google_tokens.json"
+        self._rewrite_unnoticeably(path, path.read_text().replace("token_aaaa", "token_bbbb"))
+        assert auth.refresh_google_token() == "token_bbbb"
+
+    def test_a_new_client_file_is_used_without_a_restart(self, tmp_path):
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        sent = []
+
+        def urlopen(request, timeout=None):
+            sent.append(parse_qs(request.data.decode())["client_id"][0])
+            return self._respond({"access_token": "new"})
+
+        with patch("urllib.request.urlopen", urlopen):
+            auth.refresh_google_token(force=True)
+            path = tmp_path / "google_client.json"
+            self._rewrite_unnoticeably(path, path.read_text().replace("fake-client", "fake-clienz"))
+            auth.refresh_google_token(force=True)
+        assert sent == [
+            "fake-client.apps.googleusercontent.com",
+            "fake-clienz.apps.googleusercontent.com",
+        ]
+
+    def test_a_refresh_does_not_overwrite_a_consent_saved_while_it_ran(self, tmp_path):
+        """Saving over it puts back the old refresh token and the old scopes.
+
+        The competing grant expires before the refreshed one would, as one
+        issued moments earlier does, so a comparison against the refreshed
+        expiry instead of the starting one fails here.
+        """
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        urlopen = self._urlopen_writing(
+            tmp_path,
+            {"access_token": "from_refresh"},
+            access_token="from_consent",
+            refresh_token="consent-refresh",
+            expires_at=time.time() + 1800,
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            assert auth.refresh_google_token() == "from_consent"
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert (stored["access_token"], stored["refresh_token"]) == (
+            "from_consent",
+            "consent-refresh",
+        )
+
+    def test_a_file_changed_only_in_its_scopes_is_not_saved_over(self, tmp_path):
+        """A consent can return the same refresh token with wider scopes, so a
+        change is the whole file differing, not one field of it."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, scope="narrow")
+        urlopen = self._urlopen_writing(
+            tmp_path, {"access_token": "from_refresh"}, scope="narrow wider"
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            auth.refresh_google_token()
+        assert json.loads((tmp_path / "google_tokens.json").read_text())["scope"] == "narrow wider"
+
+    def test_a_forced_refresh_does_not_overwrite_a_consent_with_an_earlier_expiry(self, tmp_path):
+        """A consent written on a host whose clock runs behind can carry an
+        earlier expiry than a token that is still valid here, which is the
+        case a forced refresh starts from. Comparing the two expiries saves
+        the old grant over it."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, expires_at=time.time() + 3000)
+        urlopen = self._urlopen_writing(
+            tmp_path,
+            {"access_token": "from_refresh"},
+            access_token="from_consent",
+            refresh_token="consent-refresh",
+            expires_at=time.time() + 2400,
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            assert auth.refresh_google_token(force=True) == "from_consent"
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert stored["refresh_token"] == "consent-refresh"
+
+    def test_a_changed_file_holding_an_expired_token_is_neither_used_nor_saved_over(self, tmp_path):
+        """Its expiry is later than the starting one, so an expiry comparison
+        returns its token, which has expired. Its refresh token may be a newer
+        grant's, so the refreshed token is returned unsaved and the next call
+        refreshes from the file."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, expires_at=50)
+        urlopen = self._urlopen_writing(
+            tmp_path,
+            {"access_token": "from_refresh"},
+            access_token="restored",
+            refresh_token="other-refresh",
+            expires_at=100,
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            assert auth.refresh_google_token() == "from_refresh"
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert (stored["access_token"], stored["refresh_token"]) == ("restored", "other-refresh")
+
+    def test_a_refresh_does_not_overwrite_a_file_caught_mid_write(self, tmp_path):
+        """Unreadable after the refresh most likely means another writer is
+        part-way through, so the token just obtained is returned unsaved."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        urlopen = self._urlopen_writing(tmp_path, {"access_token": "from_refresh"}, raw="{")
+        with patch("urllib.request.urlopen", urlopen):
+            assert auth.refresh_google_token() == "from_refresh"
+        assert (tmp_path / "google_tokens.json").read_text() == "{"
+
+    @pytest.mark.parametrize("code", sorted(auth._REFUSAL_CODES))
+    def test_a_refusal_after_the_file_was_replaced_uses_the_new_file(self, tmp_path, code):
+        """The refusal judged a refresh token `auth` had already replaced.
+        Reporting it as a refusal tells the user to re-authorise over a working
+        grant."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        urlopen = self._urlopen_writing(
+            tmp_path,
+            _http_error(code),
+            access_token="from_consent",
+            refresh_token="consent-refresh",
+            expires_at=time.time() + 3600,
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            assert auth.refresh_google_token() == "from_consent"
+
+    @pytest.mark.parametrize("code", sorted(auth._REFUSAL_CODES))
+    def test_a_refusal_after_the_file_changed_to_an_expired_token_is_not_a_refusal(
+        self, tmp_path, code
+    ):
+        """The refusal says nothing about the refresh token now in the file, so
+        the next call refreshes with it rather than this one sending the user
+        to re-authorise."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, expires_at=100)
+        urlopen = self._urlopen_writing(
+            tmp_path,
+            _http_error(code),
+            access_token="restored",
+            refresh_token="other-refresh",
+            expires_at=50,
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            with pytest.raises(auth.RefreshNetworkError):
+                auth.refresh_google_token()
+
+    def test_a_stored_token_with_no_access_token_is_refreshed_rather_than_sent(self, tmp_path):
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, access_token="", expires_at=time.time() + 3600)
+        with patch("urllib.request.urlopen", return_value=self._respond({"access_token": "new"})):
+            assert auth.refresh_google_token() == "new"
+
+    def test_a_valid_token_does_not_need_the_client_file(self, tmp_path):
+        """Only a refresh uses it, so a moment when it cannot be read must not
+        refuse a token that needs no refresh."""
+        _write_tokens(tmp_path, expires_at=time.time() + 3600)
+        assert auth.refresh_google_token() == "stored-access"
+
+    def test_concurrent_calls_refresh_once(self, tmp_path):
+        """Tool calls run in worker threads. Unserialised, a second call reads
+        the file while the first is saving it, or refreshes a second time."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        posts = []
+        second = {}
+
+        def call_from_another_thread():
+            second["token"] = auth.refresh_google_token()
+
+        other = threading.Thread(target=call_from_another_thread)
+
+        def urlopen(request, timeout=None):
+            posts.append(request)
+            if len(posts) == 1:
+                other.start()
+                # Long enough for an unserialised second call to reach the
+                # network; with the lock it is still waiting when this returns.
+                other.join(timeout=0.5)
+            return self._respond({"access_token": f"from_refresh_{len(posts)}"})
+
+        with patch("urllib.request.urlopen", urlopen):
+            first = auth.refresh_google_token()
+            other.join(timeout=5)
+
+        assert len(posts) == 1
+        assert second["token"] == first
+
+    @pytest.mark.parametrize("code", sorted(auth._REFUSAL_CODES))
+    def test_a_refusal_while_the_file_is_unreadable_is_not_a_refusal(self, tmp_path, code):
+        """The file is most likely part-way through being replaced, which clears
+        on its own; a refusal would tell the user to re-authorise over it."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        urlopen = self._urlopen_writing(tmp_path, _http_error(code), raw="{")
+        with patch("urllib.request.urlopen", urlopen):
+            with pytest.raises(auth.RefreshNetworkError):
+                auth.refresh_google_token()
+
+
 class TestTheGrantedScopesAreRecorded:
     """What Google says it granted is kept, so a missing permission can be named.
 
@@ -367,8 +612,10 @@ class TestFinishingAConsent:
         assert api.ACCOUNT_NOT_LINKED_MESSAGE not in capsys.readouterr().err
 
     def test_the_check_uses_the_token_just_saved(self, tmp_path):
-        """A cached token from before the consent would check the old account."""
-        auth._cached_google_tokens = {"access_token": "stale", "expires_at": 9e12}
+        """A token held from before the consent would check the old account."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, access_token="stale", expires_at=9e12)
+        assert auth.refresh_google_token() == "stale"
         sent = []
 
         def urlopen(request, timeout=None):
@@ -377,7 +624,6 @@ class TestFinishingAConsent:
             response.__enter__.return_value.read.return_value = b"{}"
             return response
 
-        _write_client(tmp_path)
         with patch("urllib.request.urlopen", urlopen):
             auth._finish_consent(dict(self._RAW))
         assert sent == ["Bearer a"]

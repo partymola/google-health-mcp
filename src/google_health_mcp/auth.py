@@ -119,10 +119,8 @@ def _generate_pkce():
     return verifier, challenge
 
 
-#: Its own cache and lock, kept per-provider rather than global so a second
-#: one can be added without the two evicting each other mid-sync.
-_cached_google_tokens = None
-_cached_google_client = None
+#: Tool calls run in worker threads. Without this, one can read the token file
+#: while another is half-way through saving it, or both can refresh at once.
 _google_token_lock = threading.Lock()
 
 
@@ -259,30 +257,49 @@ def _classify_google_refusal(error: urllib.error.HTTPError) -> RuntimeError:
     return TokenRefused("Google refused the credentials. Run: google-health-mcp auth")
 
 
+def _usable(tokens: dict) -> bool:
+    """Whether the stored access token can be sent, with the 5-minute buffer."""
+    expires_at = tokens.get("expires_at", 0)
+    if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
+        return False
+    return bool(tokens.get("access_token")) and time.time() < expires_at - 300
+
+
+def _reread_tokens():
+    """The token file as it is now, or None if it cannot be read."""
+    try:
+        return _load_json(config.GOOGLE_TOKENS_PATH)
+    except TokenRefused:
+        return None
+
+
 def _refresh_google_token(force: bool = False) -> str:
-    global _cached_google_tokens, _cached_google_client
+    """Return a valid access token, refreshing if expired or if `force`.
 
+    The token file is read on every call and the client file on every refresh,
+    and nothing is kept between calls: `google-health-mcp auth` replaces them
+    from another process while the server runs. A token file that changed
+    during the request is never saved
+    over, and its token is used if it is still valid. Leaving a refresh
+    unsaved costs only an access token, because Google's refresh tokens do
+    not rotate.
+    """
     with _google_token_lock:
-        if _cached_google_tokens is None:
-            _cached_google_tokens = _load_json(config.GOOGLE_TOKENS_PATH)
-        if _cached_google_client is None:
-            _cached_google_client = _load_google_client()
+        tokens = _load_json(config.GOOGLE_TOKENS_PATH)
 
-        expires_at = _cached_google_tokens.get("expires_at", 0)
-        if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
-            expires_at = 0
-        if not force and time.time() < expires_at - 300:
-            return _cached_google_tokens["access_token"]
+        if not force and _usable(tokens):
+            return tokens["access_token"]
 
-        if not _cached_google_tokens.get("refresh_token"):
+        if not tokens.get("refresh_token"):
             raise TokenRefused("No Google refresh token. Run: google-health-mcp auth")
 
+        client = _load_google_client()
         data = urlencode(
             {
                 "grant_type": "refresh_token",
-                "client_id": _cached_google_client["client_id"],
-                "client_secret": _cached_google_client.get("client_secret", ""),
-                "refresh_token": _cached_google_tokens["refresh_token"],
+                "client_id": client["client_id"],
+                "client_secret": client.get("client_secret", ""),
+                "refresh_token": tokens["refresh_token"],
             }
         ).encode()
         req = urllib.request.Request(
@@ -296,6 +313,16 @@ def _refresh_google_token(force: bool = False) -> str:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 raw = resp.read().decode()
         except urllib.error.HTTPError as e:
+            if e.code in _REFUSAL_CODES:
+                # A refusal judges the refresh token sent, which `auth` may
+                # already have replaced; the next call refreshes from the file.
+                on_disk = _reread_tokens()
+                if on_disk != tokens:
+                    if on_disk is not None and _usable(on_disk):
+                        logger.warning("Google refresh refused, but the token file was replaced")
+                        return on_disk["access_token"]
+                    logger.warning("Google refresh refused while the token file was changing")
+                    raise RefreshNetworkError("The token file changed during the refresh.") from e
             raise _classify_google_refusal(e) from e
         except OSError as e:
             raise RefreshNetworkError("Could not reach Google to refresh the token.") from e
@@ -308,10 +335,22 @@ def _refresh_google_token(force: bool = False) -> str:
         if not isinstance(payload, dict) or not payload.get("access_token"):
             raise TokenRefused("Google returned no access token. Run: google-health-mcp auth")
 
-        _cached_google_tokens = _google_token_store(payload, _cached_google_tokens)
-        _save_json(config.GOOGLE_TOKENS_PATH, _cached_google_tokens)
+        refreshed = _google_token_store(payload, tokens)
+
+        # Saving over a consent written during the request puts back the old
+        # refresh token and the old scopes. A file that changed is left alone
+        # whatever it holds, so no comparison between hosts' clocks is needed.
+        on_disk = _reread_tokens()
+        if on_disk != tokens:
+            if on_disk is not None and _usable(on_disk):
+                logger.warning("Google token file was replaced during refresh; using it instead")
+                return on_disk["access_token"]
+            logger.warning("Google token file changed during refresh; not saving over it")
+            return refreshed["access_token"]
+
+        _save_json(config.GOOGLE_TOKENS_PATH, refreshed)
         logger.info("Google token refreshed successfully")
-        return _cached_google_tokens["access_token"]
+        return refreshed["access_token"]
 
 
 def refresh_google_token(force: bool = False) -> str:
@@ -329,13 +368,6 @@ def refresh_google_token(force: bool = False) -> str:
     except Exception as e:
         logger.error("Google token refresh failed: %s", type(e).__name__)
         raise RefreshNetworkError("Could not obtain a token from Google.") from e
-
-
-def invalidate_google_token_cache():
-    """Clear the in-memory Google token cache."""
-    global _cached_google_tokens
-    with _google_token_lock:
-        _cached_google_tokens = None
 
 
 def granted_scopes() -> str | None:
@@ -473,7 +505,6 @@ def _finish_consent(raw):
 
     from . import api  # api imports this module
 
-    invalidate_google_token_cache()
     try:
         api.google_get("users/me/pairedDevices", {})
     except api.AccountNotLinked:
