@@ -319,15 +319,23 @@ def _check_token_file() -> list[Finding]:
 
 
 def _check_access_token_expiry(expires_at) -> list[Finding]:
+    if not config._is_number(expires_at):
+        return [
+            Finding(
+                "access token",
+                OK,
+                "expires_at is missing or not a finite number, so the next call "
+                "refreshes the token and replaces it.",
+            )
+        ]
     when = _timestamp_or_none(expires_at)
     if when is None:
         return [
             Finding(
                 "access token",
                 WARN,
-                "expires_at is missing, not a number, or not a usable timestamp, "
-                "so expiry cannot be checked. A value in milliseconds rather than "
-                "seconds does this.",
+                "expires_at is not a usable timestamp, so expiry cannot be checked. "
+                "A value in milliseconds rather than seconds does this.",
                 "Re-run `google-health-mcp auth`.",
             )
         ]

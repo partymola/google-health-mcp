@@ -1,5 +1,6 @@
 """Configuration paths and constants for the Google Health MCP server."""
 
+import math
 import os
 from pathlib import Path
 
@@ -90,6 +91,16 @@ def missing_scopes(granted) -> list[str] | None:
         return None
     held = set(granted.split())
     return [n for n in GOOGLE_SCOPE_READERS if f"{GOOGLE_SCOPE_PREFIX}{n}.readonly" not in held]
+
+
+def _is_number(value) -> bool:
+    """Whether a JSON value is a number a float holds: `true` is an int, and `Infinity` parses."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _is_token(value) -> bool:

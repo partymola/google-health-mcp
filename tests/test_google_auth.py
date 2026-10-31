@@ -6,6 +6,7 @@ exception type would reach code that has no branch for it.
 """
 
 import json
+import math
 import os
 import threading
 import time
@@ -364,7 +365,11 @@ class TestWhatARefreshStores:
         """Publishing the app and re-authorising is what clears it: consent has no previous."""
         assert "refresh_token_expires_at" not in auth._google_token_store({"access_token": "a"}, {})
 
-    @pytest.mark.parametrize("value", ["604799", True, {}], ids=["str", "bool", "dict"])
+    @pytest.mark.parametrize(
+        "value",
+        ["604799", True, {}, float("inf"), float("-inf"), float("nan"), 10**400],
+        ids=["str", "bool", "dict", "infinity", "negative-infinity", "nan", "oversized"],
+    )
     def test_an_unusable_granted_expiry_records_nothing(self, value):
         """Adding it to a timestamp would store a date nobody can read back."""
         store = auth._google_token_store(
@@ -372,9 +377,30 @@ class TestWhatARefreshStores:
         )
         assert "refresh_token_expires_at" not in store
 
-    @pytest.mark.parametrize("value", ["3600", None, {}, True], ids=["str", "null", "dict", "bool"])
+    @pytest.mark.parametrize(
+        "value",
+        [float("inf"), "soon", {"x": 1}, True],
+        ids=["infinity", "str", "dict", "bool"],
+    )
+    def test_a_stored_granted_expiry_that_is_not_a_number_is_replaced(self, value):
+        """Kept, it reads as no expiry at all and hides doctor's short-lived warning."""
+        previous = {"refresh_token_expires_at": value}
+        assert "refresh_token_expires_at" not in auth._google_token_store(
+            {"access_token": "a"}, previous
+        )
+        store = auth._google_token_store(
+            {"access_token": "a", "refresh_token_expires_in": 604799}, previous
+        )
+        assert abs(store["refresh_token_expires_at"] - (time.time() + 604799)) < 5
+
+    @pytest.mark.parametrize(
+        "value",
+        ["3600", None, {}, True, float("inf"), float("-inf"), float("nan"), 10**400],
+        ids=["str", "null", "dict", "bool", "infinity", "negative-infinity", "nan", "oversized"],
+    )
     def test_an_unusable_expiry_falls_back_rather_than_raising(self, tmp_path, value):
-        """The arithmetic runs in setup's main thread, where nothing catches a TypeError."""
+        """The arithmetic runs in setup's main thread, where nothing catches a TypeError.
+        JSON here parses `Infinity`, and a token stored with it is never refreshed."""
         _write_client(tmp_path)
         _write_tokens(tmp_path)
         payload = {"access_token": "new", "expires_in": value}
@@ -622,6 +648,23 @@ class TestTheTokenFileIsTheOnlyCopy:
         with patch("urllib.request.urlopen", urlopen):
             assert auth.refresh_google_token() == "from_refresh"
 
+    @pytest.mark.parametrize("literal", ["Infinity", "-Infinity", "NaN", "1e400"])
+    def test_a_stored_expiry_that_is_not_finite_is_refreshed(self, tmp_path, literal):
+        """An earlier release could write these. `Infinity` never refreshes, and
+        the refresh has to replace the value or the next call asks again."""
+        _write_client(tmp_path)
+        (tmp_path / "google_tokens.json").write_text(
+            '{"access_token": "stored-access", "refresh_token": "stored-refresh", '
+            f'"expires_at": {literal}}}'
+        )
+        answer = self._respond({"access_token": "new"})
+        with patch("urllib.request.urlopen", return_value=answer) as request:
+            assert auth.refresh_google_token() == "new"
+            assert auth.refresh_google_token() == "new"
+        assert request.call_count == 1
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert math.isfinite(stored["expires_at"])
+
     def test_a_valid_token_does_not_need_the_client_file(self, tmp_path):
         """Only a refresh uses it, so a moment when it cannot be read must not
         refuse a token that needs no refresh."""
@@ -780,6 +823,37 @@ class TestFinishingAConsent:
         assert self._finish(tmp_path, MagicMock(return_value={}), refresh_token=value) == 1
         assert "Google returned no refresh token" in capsys.readouterr().err
         assert (tmp_path / "google_tokens.json").read_bytes() == before
+
+    def test_a_lifetime_too_large_for_a_float_does_not_end_in_a_traceback(self, tmp_path):
+        """It runs in the main thread, where nothing else would catch the OverflowError."""
+        code = self._finish(
+            tmp_path,
+            MagicMock(return_value={}),
+            expires_in=10**400,
+            refresh_token_expires_in=10**400,
+        )
+        assert code == 0
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert abs(stored["expires_at"] - (time.time() + config.GOOGLE_TOKEN_LIFETIME)) < 5
+        assert "refresh_token_expires_at" not in stored
+
+    def test_a_short_lived_grant_is_warned_about(self, tmp_path, capsys):
+        assert (
+            self._finish(tmp_path, MagicMock(return_value={}), refresh_token_expires_in=604799) == 0
+        )
+        assert "expires in about a week" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "value",
+        ["soon", True, {}, float("inf"), float("nan"), 10**400],
+        ids=["str", "bool", "dict", "infinity", "nan", "oversized"],
+    )
+    def test_a_lifetime_that_records_no_expiry_is_not_warned_about(self, tmp_path, capsys, value):
+        """The warning says a week, and nothing recorded says so."""
+        assert (
+            self._finish(tmp_path, MagicMock(return_value={}), refresh_token_expires_in=value) == 0
+        )
+        assert "about a week" not in capsys.readouterr().out
 
     @pytest.mark.parametrize("body", [["access_token"], "access_token", 7])
     def test_a_consent_answer_that_is_not_an_object_saves_nothing(self, tmp_path, capsys, body):

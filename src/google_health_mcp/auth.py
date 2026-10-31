@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import config
-from .config import _is_token
+from .config import _is_number, _is_token
 from .errors import GoogleHealthError
 
 logger = logging.getLogger(__name__)
@@ -187,13 +187,11 @@ def _google_auth_url(challenge: str, client_id: str) -> str:
 def _google_expires_in(payload: dict) -> float:
     """Seconds until the access token expires, defaulting when unusable.
 
-    A string or null here would otherwise raise a TypeError out of the
+    A string, null or oversized integer here would otherwise raise out of the
     arithmetic, in the setup flow's main thread where nothing catches it.
     """
-    value = payload.get("expires_in", config.GOOGLE_TOKEN_LIFETIME)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return config.GOOGLE_TOKEN_LIFETIME
-    return value
+    value = payload.get("expires_in")
+    return value if _is_number(value) else config.GOOGLE_TOKEN_LIFETIME
 
 
 def _google_token_store(payload: dict, previous: dict) -> dict:
@@ -218,9 +216,9 @@ def _google_token_store(payload: dict, previous: dict) -> dict:
         "expires_at": time.time() + _google_expires_in(payload),
     }
     granted = payload.get("refresh_token_expires_in")
-    if previous.get("refresh_token_expires_at") is not None:
+    if _is_number(previous.get("refresh_token_expires_at")):
         store["refresh_token_expires_at"] = previous["refresh_token_expires_at"]
-    elif isinstance(granted, (int, float)) and not isinstance(granted, bool):
+    elif _is_number(granted):
         store["refresh_token_expires_at"] = time.time() + granted
     # The scopes Google reports granting, which is the only record of what a
     # grant can read: a refresh never widens it. Absent means unknown, not none.
@@ -262,9 +260,7 @@ def _classify_google_refusal(error: urllib.error.HTTPError) -> RuntimeError:
 
 def _usable(tokens: dict) -> bool:
     """Whether the stored access token can be sent, with the 5-minute buffer."""
-    expires_at = tokens.get("expires_at", 0)
-    if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
-        return False
+    expires_at = tokens["expires_at"] if _is_number(tokens.get("expires_at")) else 0
     return _is_token(tokens.get("access_token")) and time.time() < expires_at - 300
 
 
@@ -502,7 +498,8 @@ def _finish_consent(raw):
         )
         sys.exit(1)
 
-    _save_json(config.GOOGLE_TOKENS_PATH, _google_token_store(raw, {}))
+    store = _google_token_store(raw, {})
+    _save_json(config.GOOGLE_TOKENS_PATH, store)
     print("Tokens saved.")
 
     from . import api  # api imports this module
@@ -518,7 +515,7 @@ def _finish_consent(raw):
     print("\nSetup complete. Register with Claude Code:")
     exe = shutil.which("google-health-mcp") or "google-health-mcp"
     print(f"  claude mcp add -s user google-health -- {exe}")
-    if "refresh_token_expires_in" in raw:
+    if "refresh_token_expires_at" in store:
         # Worth stopping the user here: it works today and breaks in a week,
         # by which time nothing connects the failure to this moment.
         print(

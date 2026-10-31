@@ -194,6 +194,24 @@ def test_survives_an_expires_at_in_milliseconds(setup_paths):
     assert any(f.name == "access token" and f.severity == doctor.WARN for f in findings)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [float("inf"), float("-inf"), float("nan"), 10**400, "soon", True, None],
+    ids=["infinity", "negative-infinity", "nan", "oversized", "str", "bool", "null"],
+)
+def test_an_expiry_the_next_refresh_replaces_does_not_advise_auth(setup_paths, value):
+    """Re-authorising rewrites a file this host may not own, for what clears by itself."""
+    config_dir, _db_path = setup_paths
+    _write_credentials(config_dir, tokens={"expires_at": value})
+
+    (finding,) = [f for f in doctor.run_checks() if f.name == "access token"]
+
+    assert finding.severity == doctor.OK
+    assert "next call" in finding.detail
+    assert "auth" not in finding.detail
+    assert finding.fix is None
+
+
 def test_one_failing_check_does_not_abort_the_report(setup_paths, monkeypatch):
     def explode():
         raise RuntimeError(FAKE_ACCESS_TOKEN)
