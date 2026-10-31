@@ -112,7 +112,10 @@ class HealthAPIError(GoogleHealthError):
 
 
 class HealthNetworkError(HealthAPIError):
-    """No answer from Google at all, so the next request would fare the same."""
+    """No answer, or a token refresh answered 200 with no token.
+
+    The next request is likely to fare the same.
+    """
 
 
 # --- Google Health API ---
@@ -366,8 +369,8 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
             raise HealthAPIError(f"API error {e.code} for {_operation(path)}") from e
         except (OSError, http.client.HTTPException) as e:
             # A timeout, a refused or reset connection, a failed lookup, or a
-            # response cut off mid-read: no usable answer, so the next request
-            # would fare the same.
+            # response cut off mid-read: no answer, so the next request is
+            # likely to fare the same.
             raise HealthNetworkError("Network error. Check your connection.") from e
 
     try:

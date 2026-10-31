@@ -332,6 +332,7 @@ def _refresh_google_token(force: bool = False) -> str:
             raise RefreshNetworkError("Google returned an unreadable response.") from e
 
         if not isinstance(payload, dict) or not _is_token(payload.get("access_token")):
+            logger.warning("Google answered a refresh with no access token")
             raise RefreshNetworkError("Google returned no access token.")
 
         refreshed = _google_token_store(payload, tokens)

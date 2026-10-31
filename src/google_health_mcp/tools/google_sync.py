@@ -909,8 +909,9 @@ def sync_account(conn, start, end) -> int:
     different scopes: a grant lacking one still stores the other two. A
     record that fails is re-raised once the rest are stored, so the type
     fails; unlike a route, these are three fixed records, and one that keeps
-    failing is worth seeing. No answer or a rate limit stops at once, since
-    the next record would fare the same.
+    failing is worth seeing. No answer, a token refresh answered 200 with no
+    token, or a rate limit stops at once, since the next record is likely to
+    fare the same.
     """
     missing = set(config.missing_scopes(auth.granted_scopes()) or ())
     fetched_at = datetime.now(timezone.utc).isoformat()
@@ -983,8 +984,9 @@ def sync_exercise_routes(conn, start, end) -> int:
 
     One workout whose export fails is left out and logged, so it cannot fail
     the type on every run; a later sync asks again while the workout is still
-    inside its window. No answer at all, a refusal or a rate limit fails the
-    type, since each says the next export would fare the same.
+    inside its window. No answer, a token refresh answered 200 with no token,
+    a refusal or a rate limit fails the type, since each says the next export
+    is likely to fare the same.
     """
     held = db.route_ids(conn)
     covered = _days_another_provider_recorded(conn)

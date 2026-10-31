@@ -436,7 +436,7 @@ class TestFailures:
     )
     def test_a_request_with_no_answer_is_a_network_error(self, failure, waits):
         """The route sync leaves one workout's failure out and stops on this one,
-        and it is not retried, since the next request would fare the same."""
+        and it is not retried, since the next request is likely to fare the same."""
         with patch("urllib.request.urlopen", side_effect=failure) as m:
             with pytest.raises(api.HealthNetworkError):
                 api.google_get("users/me/profile", {})
@@ -774,7 +774,7 @@ class TestAgainstTheRealGoogleRefresh:
         assert type(caught.value.__cause__) is auth.RefreshNetworkError
 
     def test_a_sync_getting_a_200_with_no_token_does_not_fail_doctor(self, monkeypatch):
-        """Recorded as `auth_error`, doctor grades it FAIL and answers "run auth"."""
+        """If recorded as `auth_error`, doctor grades it FAIL and answers "run auth"."""
         from google_health_mcp import db, doctor
         from google_health_mcp.tools import sync_tools
 
@@ -791,6 +791,12 @@ class TestAgainstTheRealGoogleRefresh:
             "status": "error",
             "message": "Network error. Check your connection.",
         }
+        conn = db.get_db()
+        row = conn.execute(
+            "SELECT status, notes FROM sync_log WHERE data_type = 'sleep'"
+        ).fetchone()
+        conn.close()
+        assert tuple(row) == ("error", "Network error. Check your connection.")
         (finding,) = doctor.check_sync_health()
         assert finding.severity == doctor.WARN
 

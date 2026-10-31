@@ -177,6 +177,7 @@ class TestTheGoogleRefreshBoundary:
         "body",
         [
             {"scope": "granted"},
+            {"refresh_token": "reissued"},
             {"access_token": None},
             {"access_token": ""},
             {"access_token": "   "},
@@ -193,6 +194,7 @@ class TestTheGoogleRefreshBoundary:
         ],
         ids=[
             "absent",
+            "refresh-token-only",
             "null",
             "empty",
             "blank",
@@ -220,6 +222,30 @@ class TestTheGoogleRefreshBoundary:
                 auth.refresh_google_token()
         assert str(caught.value) == "Google returned no access token."
         assert (tmp_path / "google_tokens.json").read_bytes() == before
+
+    def test_a_200_with_no_token_logs_fixed_text_once(self, tmp_path, caplog):
+        """The client reports it as a network error, so the log is what tells them apart."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        answer = TestWhatARefreshStores()._respond({"scope": "SECRETMARKER"})
+        with caplog.at_level("WARNING", logger=auth.__name__):
+            with patch("urllib.request.urlopen", return_value=answer):
+                with pytest.raises(auth.RefreshNetworkError):
+                    auth.refresh_google_token()
+        assert [r.getMessage() for r in caplog.records] == [
+            "Google answered a refresh with no access token"
+        ]
+
+    def test_a_forced_refresh_with_no_token_raises_and_keeps_the_valid_one(self, tmp_path):
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, expires_at=time.time() + 3600)
+        before = (tmp_path / "google_tokens.json").read_bytes()
+        answer = TestWhatARefreshStores()._respond({"scope": "granted"})
+        with patch("urllib.request.urlopen", return_value=answer):
+            with pytest.raises(auth.RefreshNetworkError):
+                auth.refresh_google_token(force=True)
+        assert (tmp_path / "google_tokens.json").read_bytes() == before
+        assert auth.refresh_google_token() == "stored-access"
 
 
 class TestTheTestingStatusDiagnostic:
@@ -611,6 +637,27 @@ class TestTheTokenFileIsTheOnlyCopy:
         with patch("urllib.request.urlopen", urlopen):
             with pytest.raises(auth.RefreshNetworkError):
                 auth.refresh_google_token()
+
+    def test_a_200_with_no_token_leaves_a_file_written_during_the_request(self, tmp_path):
+        """The next call reads the new file, so this one has nothing to save."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        urlopen = self._urlopen_writing(
+            tmp_path,
+            {"scope": "granted"},
+            access_token="from_consent",
+            refresh_token="consent-refresh",
+            expires_at=time.time() + 3600,
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            with pytest.raises(auth.RefreshNetworkError):
+                auth.refresh_google_token()
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert (stored["access_token"], stored["refresh_token"]) == (
+            "from_consent",
+            "consent-refresh",
+        )
+        assert auth.refresh_google_token() == "from_consent"
 
     def test_a_stored_token_with_no_access_token_is_refreshed_rather_than_sent(self, tmp_path):
         _write_client(tmp_path)
