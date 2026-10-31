@@ -299,9 +299,9 @@ def _rollup_values(data_type: str, start, end, field: str, extract) -> dict:
     return values
 
 
-#: The four activity levels, kept for the day a derivation exists. Google's
-#: own vocabulary matches the columns exactly - SEDENTARY / LIGHTLY_ACTIVE /
-#: MODERATELY_ACTIVE / VERY_ACTIVE - which is what made this look easy.
+#: The four activity levels, kept for a derivation if one is ever added.
+#: Nothing reads this (see `sync_activity`). Google's vocabulary maps one to
+#: one onto the columns.
 _ACTIVITY_LEVEL_COLUMNS = {
     "VERY_ACTIVE": "very_active_minutes",
     "MODERATELY_ACTIVE": "fairly_active_minutes",
@@ -322,18 +322,18 @@ def sync_activity(conn, start, end) -> int:
     sum would silently drop the larger half of the number.
 
     **The five minute columns are deliberately not written**, `active_minutes`
-    among them: it was a derivation of two of the other four, so it goes with
-    them. Google's `activity-level` vocabulary matches them exactly, which is
-    what made it look straightforward, but no reading of it tiles a day. The
-    raw list returns more minute-long segments than the day has minutes,
-    because `list` is the per-source view and the sources overlap; reconciled,
-    it covers well under the day. The type has no daily rollup - the API says
-    so plainly, whatever the discovery document's value union implies - so
-    there is nothing left that carries Google's own reconciliation.
-    De-duplicating the raw stream ourselves would mean inventing a precedence
-    rule between sources and presenting it as Google's number, and deriving
-    sedentary as the day minus the rest would rest on the four levels
-    partitioning a day, which they measurably do not.
+    among them: it is very_active + fairly_active, so it has no source in this
+    API without those two. Google's `activity-level` vocabulary maps one to one
+    onto the other four, but no reading of it partitions a day. The raw list
+    returns more minute-long segments than the day has minutes, because `list`
+    is the per-source view and the sources overlap. The type has no daily
+    rollup: the API says so plainly, whatever the discovery document's value
+    union implies. So no rollup carries Google's own reconciliation, and the one
+    reconciled view covers well under the day. De-duplicating the raw stream
+    ourselves would mean inventing a precedence rule between sources and
+    presenting it as Google's number, and deriving sedentary as the day minus
+    the rest would rest on the four levels partitioning a day, which they
+    measurably do not.
 
     So they stay NULL, as `sleep.efficiency` and `weight.bmi` already do, and
     an imported row's values beside them are left untouched.

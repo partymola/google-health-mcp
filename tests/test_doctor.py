@@ -812,7 +812,7 @@ def test_read_only_open_handles_a_non_utf8_path(tmp_path):
 
 
 def test_read_only_open_handles_a_path_with_a_percent_sign(tmp_path):
-    """Guards the double-encoding class that the escaping fix could introduce."""
+    """A directory named with `%25` must survive the URI's percent-decoding."""
     awkward = tmp_path / "with%25pct"
     awkward.mkdir()
     db_path = awkward / "google_health.db"
@@ -1026,8 +1026,8 @@ def test_a_free_callback_port_is_silent(setup_paths):
     equally true of a check wired to report unconditionally. This is the half
     that says `doctor` stays quiet when `auth` would actually work, and it
     earns its own test because not asking for address reuse on Windows buys a
-    window in which a recently closed `auth` run reads as busy - so the
-    false-positive direction is the one now worth guarding.
+    window in which a recently closed `auth` run reads as busy. That makes the
+    false-positive direction the one worth guarding.
 
     `setup_paths` is not decoration: `check_auth_prerequisites` returns
     nothing at all in offline mode, so without it this could pass by not
@@ -1057,9 +1057,9 @@ def test_an_empty_path_variable_is_not_reported_as_the_default(setup_paths, monk
 def test_a_dead_token_fails_rather_than_warns(setup_paths):
     """A revoked token is the failure that will not clear itself.
 
-    sync_tools logged these as "error", which doctor grades WARN, so a setup
-    that had not synced for weeks reported "No blocking problems" and exited
-    zero.
+    This guards doctor's grading, from a row seeded by hand. Graded WARN, a
+    setup that has not synced for weeks would report "No blocking problems" and
+    exit zero. The next test pins the writer of that row.
     """
     _, db_path = setup_paths
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1109,7 +1109,7 @@ class TestDoctorStaysOffline:
     """doctor must not be able to touch the credentials at all.
 
     It runs on hosts that do not own the token file. An import of auth or
-    api is enough: a refresh triggered from a diagnostic rotates a token
+    api is enough: a refresh triggered from a diagnostic rewrites a token file
     another host is using, and no test watching a healthy setup would see it.
     """
 
@@ -1233,10 +1233,10 @@ class TestASeriesThatHasStopped:
     def test_a_series_dead_far_longer_than_the_windows_is_still_reported(self, setup_paths):
         """The check must not go blind on an old failure - it is permanent.
 
-        Measuring density over the days before the recent window rather than
-        before the type's own last row made a long-dead series read as never
-        established, so `doctor` reported a clean bill of health over exactly
-        the failure it exists to catch, from about six weeks afterwards on.
+        Measured over the days before the recent window rather than before the
+        type's own last row, density would read a daily series as never
+        established about a month after it stopped. `doctor` would then report
+        a clean bill of health over the failure it exists to catch.
         """
         _config_dir, db_path = setup_paths
         db_path.parent.mkdir(parents=True)
@@ -1732,7 +1732,8 @@ class TestTheMachineReadableReport:
 
         `name` is prose and carries the data type, so it cannot be matched on.
         If this slug changes, every consumer silently stops seeing the
-        condition - a missing key reads as "no stopped series", not as an error.
+        condition. A slug no finding carries reads as "no stopped series", not
+        as an error.
         """
         _config_dir, db_path = setup_paths
         db_path.parent.mkdir(parents=True)
@@ -1759,9 +1760,9 @@ class TestTheMachineReadableReport:
         assert doctor.STOPPED_SERIES == "stopped-series"
 
     def test_the_payload_names_the_build_that_produced_it(self):
-        """Without it a consumer cannot tell "no stopped series" from "this
-        build has no such check": an older release omits the key entirely, and
-        one older still rejects `--json` and exits 2.
+        """Without it a consumer cannot tell "no never-filled series" from "this
+        build does not know the slug": in both, no finding carries
+        `series-never-filled`.
 
         A round trip against the same source, so it pins that the key exists and
         tracks this package's metadata - not that the metadata is right.

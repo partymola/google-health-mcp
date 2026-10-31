@@ -12,8 +12,8 @@ rather than incidental:
   which fields are set - and never by content.
 
 Live validation (token introspection, scope diffing) is deliberately absent: it
-spends API quota, and on a shared credential file a refresh triggered by a
-diagnostic can rotate the token and break the host that legitimately owns it.
+spends API quota, and a refresh triggered by a diagnostic would rewrite a token
+file the syncing host owns.
 """
 
 import json
@@ -58,11 +58,10 @@ _REFRESH_TOKEN_LIFETIME = timedelta(days=180)
 # not one - and a token exchange with it cannot succeed.
 _GOOGLE_CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
 
-# Columns db._migrate() adds to an older database on the next open. Keep in
-# step with it: listing one here that it does not add hides a real fault.
-# Derived, not restated: a column db._migrate() repairs is one this check must
-# excuse, and two hand-kept lists would drift. The lockstep test still probes
-# what _migrate actually does rather than trusting the declaration.
+# Columns db._migrate() adds to an older database on the next open, which this
+# check must excuse. Derived from db.MIGRATIONS, because two hand-kept lists
+# would drift. Excusing a column _migrate does not add would hide a real fault,
+# so the lockstep test probes what it actually does.
 _SELF_HEALING_COLUMNS = {(table, column) for table, column, _ in db.MIGRATIONS}
 
 # A cache older than this has stopped being updated rather than merely lagging.
@@ -81,8 +80,8 @@ class Finding:
     # `name` is prose meant for a person and carries the data type where there
     # is one, so it is not something a script can match on; this is. Set it on
     # any finding a program needs to recognise, and never change one that has a
-    # consumer - renaming it silently breaks them, since a missing key reads as
-    # "that condition is absent" rather than as an error.
+    # consumer. Renaming it silently breaks them, since a slug no finding
+    # carries reads as "that condition is absent" rather than as an error.
     check: str | None = None
 
 
@@ -854,10 +853,11 @@ def _check_stopped_series(conn: sqlite3.Connection, newest: dict[str, str]) -> l
             continue
         # Density is measured over the days before this type's OWN last row,
         # not before the recent window. Anchored to the shared reference, a
-        # series dead for longer than the two windows together has no rows in
-        # either, reads as never established, and is skipped - so the check
-        # went blind about six weeks after the failure it exists to catch,
-        # which is the state it would spend most of its life in.
+        # daily series dead for about a month would have fewer than
+        # `_ESTABLISHED_DAYS` rows in the days measured, would read as never
+        # established and would be skipped. The check would then be blind to
+        # the failure it exists to catch, and would spend most of its life in
+        # that state.
         established = _days_with_rows(
             conn, data_type, stopped_at - timedelta(days=_STOPPED_PRIOR_DAYS - 1), stopped_at
         )
@@ -1141,10 +1141,9 @@ def format_json(findings: list[Finding]) -> str:
     return json.dumps(
         {
             # The build that produced this payload. A consumer cannot otherwise
-            # tell "no stopped series" from "this build predates the slug": an
-            # older release has no `check` field at all, and one older still
-            # rejects `--json` outright. Absence of a key is not absence of a
-            # condition, and only the version distinguishes them.
+            # tell "no never-filled series" from "this build does not know the
+            # slug": in both, no finding has `series-never-filled` as its
+            # `check`. The version tells them apart when it is not null.
             "version": _package_version(),
             "findings": [
                 {

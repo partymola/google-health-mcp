@@ -143,7 +143,7 @@ class TestTheSyncRecordsIt:
         assert db.recorded_missing_scopes() == _SOME
 
     def test_it_is_recorded_even_when_a_type_fails(self, db_path):
-        """A missing scope is exactly what makes types fail."""
+        """The record is written after the types, so a failed type must not stop it."""
 
         def refused(conn, start, end):
             raise sync_tools.api.HealthAuthError("refused")
@@ -194,7 +194,7 @@ class TestAMissingScopeSkipsRatherThanFails:
         )
 
     def test_a_token_that_has_not_recorded_its_scopes_is_refreshed_first(self, db_path):
-        """Every token from before this release records none until its next
+        """A token from before scopes were recorded records none until its next
         refresh; without one the first sync after upgrading fetches what the
         grant lacks and fails on the 403."""
         held = [s for s in config.GOOGLE_SCOPE_READERS if s != "location"]
@@ -345,8 +345,8 @@ class TestAMissingScopeSkipsRatherThanFails:
         assert ran == [1]
 
     def test_the_account_records_skip_one_at_a_time(self, db_path, tmp_db):
-        """Settings are held on every older grant; losing them with profile
-        because the three were fetched together would be the failure again."""
+        """A grant lacking only the profile scope still stores the other two
+        records; gating the three together would lose them."""
         held = [s for s in config.GOOGLE_SCOPE_READERS if s != "profile"]
         profile = []
         with (

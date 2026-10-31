@@ -38,11 +38,10 @@ def test_version_flag_does_not_mask_invalid_subcommand_args(capsys):
 
 
 def test_auth_without_a_client_file_says_so_rather_than_crashing(capsys, tmp_path, monkeypatch):
-    """The first command the README gives, run before the file is in place.
+    """`auth`, run before the client file is in place.
 
-    It used to end in a five-frame traceback whose message told the reader to
-    run the command they had just run - correct wording for a missing token,
-    circular for the client file that `auth` reads first.
+    It exits 1. The message on stderr names the Desktop app client. The message
+    holds no traceback.
     """
     monkeypatch.setattr(
         "google_health_mcp.config.GOOGLE_CLIENT_PATH", tmp_path / "google_client.json"

@@ -38,9 +38,8 @@ class GoogleHealthError(Exception):
 class InvalidDateError(GoogleHealthError, ValueError):
     """A date argument the tools cannot parse.
 
-    Keeps `ValueError` so `parse_date`'s existing contract is unchanged for
-    any caller catching it, which `test_invalid_format_raises` and
-    `test_invalid_relative_raises` pin.
+    A `ValueError` so a caller of `parse_date` can catch it as one, which
+    `test_invalid_format_raises` and `test_invalid_relative_raises` pin.
     """
 
 
@@ -60,7 +59,7 @@ class UnknownExerciseType(GoogleHealthError):
 class LiveRefreshFailed(GoogleHealthError, RuntimeError):
     """A `live=True` query could not refresh the window it was asked for.
 
-    Keeps `RuntimeError` because `tests/test_refresh_before_query.py` catches
-    that. Its message carries the data type and the sync's status word, never
-    the notes, since these paths handle API responses.
+    A `RuntimeError` because `tests/test_refresh_before_query.py` catches that.
+    Its message carries the data type and the sync's status word, never the
+    notes, since these paths handle API responses.
     """

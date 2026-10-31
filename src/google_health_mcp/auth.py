@@ -42,10 +42,10 @@ class _CallbackServer(HTTPServer):
 
     Deliberate, and not what `HTTPServer` does by default: it asks for address
     reuse, which on Windows is what lets another process bind over this
-    listener and take the code. Not asking is the fix; the exclusive-use
-    option is asked for as well. Why each half is there, and what it costs, is
-    in AGENTS.md. Pinned by TestTheCallbackPortIsNotShared, which drives this
-    method's Windows branch on a POSIX runner.
+    listener and take the code. Not asking is what closes that; the
+    exclusive-use option is asked for as well. Why each half is there, and
+    what it costs, is in AGENTS.md. Pinned by TestTheCallbackPortIsNotShared,
+    which drives this method's Windows branch on a POSIX runner.
     """
 
     allow_reuse_address = sys.platform != "win32"
@@ -70,10 +70,11 @@ class TokenRefused(GoogleHealthError, RuntimeError):
 class RefreshNetworkError(GoogleHealthError, RuntimeError):
     """The refresh request never got an answer.
 
-    Keeps RuntimeError so existing callers and `_classify_google_refusal`'s
-    return type are unaffected, but is distinguishable: an unreachable server
-    says nothing about whether the credentials are still good, and telling the
-    user to re-authorise would rotate a token file another host may own.
+    A RuntimeError like `TokenRefused`, because `_classify_google_refusal`
+    returns one or the other under that type. It is a class of its own because
+    an unreachable server says nothing about whether the credentials are still
+    good, and telling the user to re-authorise would rotate a token file another
+    host may own.
     """
 
 
@@ -443,9 +444,9 @@ def setup_google_auth():
 
     auth_url = _google_auth_url(challenge, client["client_id"])
 
-    # Bind before opening the browser: the listener no longer asks to share the
-    # port, so a busy one is now a real failure, and sending the user to an
-    # authorisation page whose redirect has nowhere to land wastes the attempt.
+    # Bind before opening the browser: with the port busy, sending the user to
+    # an authorisation page whose redirect has nowhere to land wastes the
+    # attempt.
     try:
         server = _CallbackServer(("localhost", config.GOOGLE_CALLBACK_PORT), CallbackHandler)
     except OSError as e:

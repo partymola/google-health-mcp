@@ -556,20 +556,21 @@ class TestTheTrendConnectionIsAlwaysClosed:
 
     Every other tool closes in the function that opened, with nothing between;
     this one holds the connection across `parse_date` and the trend call, so
-    anything raising in between abandons it. The traceback keeps the frame
-    alive and the frame keeps the connection, so it is a reference cycle:
-    reclaimed by the cyclic collector eventually rather than closed at the
-    point of failure. Measured, the descriptor count does not climb.
+    only its `finally` closes it when one of them raises. Without that, the
+    traceback keeps the frame alive and the frame keeps the connection, so it
+    is a reference cycle: reclaimed by the cyclic collector eventually rather
+    than closed at the point of failure. Measured, the descriptor count does
+    not climb.
 
     Observed by recording `close()`, not by using the connection afterwards.
     Those two are indistinguishable from the test's thread: a connection
     opened on the worker thread `anyio` runs the query on refuses use with the
     same `ProgrammingError` a closed one raises, so that assertion passes
-    whether or not the fix is present.
+    whether or not the connection is closed.
 
-    It also fails for `with db.get_db() as conn:`, which is the tidier-looking
-    reinstatement of the bug: `sqlite3.Connection`'s context manager commits or
-    rolls back a transaction and never closes.
+    It also fails for `with db.get_db() as conn:`, which looks tidier and
+    abandons the connection too: `sqlite3.Connection`'s context manager commits
+    or rolls back a transaction and never closes.
     """
 
     async def test_a_bad_date_does_not_abandon_the_connection(self, monkeypatch, tmp_path):

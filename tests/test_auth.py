@@ -11,8 +11,9 @@ import pytest
 from google_health_mcp import auth
 from google_health_mcp.auth import _generate_pkce, _load_json, _save_json, refresh_google_token
 
-# Not `hasattr(os, "fchmod")`: CPython 3.13 added os.fchmod on Windows, so that
-# test stopped selecting POSIX and the mode assertions below ran there anyway.
+# Not `hasattr(os, "fchmod")`: os.fchmod exists on Windows since CPython 3.13,
+# so that test does not select POSIX and the mode assertions below would run
+# there.
 skip_non_posix = pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX mode bits; Windows uses ACLs"
 )
@@ -81,8 +82,8 @@ class TestSaveLoadJson:
 
         Equal-length payloads cannot catch a missing O_TRUNC: the second write
         covers the first exactly. A leftover tail makes the file unparseable,
-        which now reads as unusable credentials and sends the user to
-        re-authorise - rotating a token file the syncing host owns.
+        which reads as unusable credentials and sends the user to re-authorise.
+        That rotates a token file the syncing host owns.
         """
         path = tmp_path / "tokens.json"
         _save_json(path, {"padding": "x" * 500, "v": 1})
@@ -165,11 +166,11 @@ def _refuse_the_network(what):
 
 @skip_non_posix
 def test_an_existing_loose_token_file_is_tightened(tmp_path):
-    """O_CREAT's mode applies only at creation, so upgrades kept 0644.
+    """`_save_json`'s fchmod narrows an existing file.
 
-    An install predating the owner-only write keeps a world-readable refresh
-    token until something narrows it, and the user should not have to know to
-    run chmod by hand.
+    O_CREAT's mode applies only at creation. A token file already at 0644 holds
+    a world-readable refresh token until something narrows it, and the user
+    should not have to know to run chmod by hand.
     """
     path = tmp_path / "tokens.json"
     path.write_text("{}")
@@ -473,7 +474,8 @@ class TestTheCallbackPortIsNotShared:
         ), calls
 
     def test_reuse_is_allowed_off_windows_and_refused_on_it(self):
-        """Not asking to share is the fix; the exclusive option is the belt.
+        """Not asking to share is what protects the listener; the exclusive option
+        is a second guard.
 
         The runtime value alone cannot see a revert to a bare `True`, because
         that is what this platform is supposed to have, so the source form is
