@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import config
+from .config import _is_token
 from .errors import GoogleHealthError
 
 logger = logging.getLogger(__name__)
@@ -195,13 +196,6 @@ def _google_expires_in(payload: dict) -> float:
     return value
 
 
-def _is_token(value) -> bool:
-    """Whether a value is RFC 6749's token syntax (A.12, A.17) and not only spaces."""
-    return (
-        isinstance(value, str) and value.isascii() and value.isprintable() and bool(value.strip())
-    )
-
-
 def _google_token_store(payload: dict, previous: dict) -> dict:
     """Shape a token response for storage.
 
@@ -271,7 +265,7 @@ def _usable(tokens: dict) -> bool:
     expires_at = tokens.get("expires_at", 0)
     if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
         return False
-    return bool(tokens.get("access_token")) and time.time() < expires_at - 300
+    return _is_token(tokens.get("access_token")) and time.time() < expires_at - 300
 
 
 def _reread_tokens():
@@ -299,7 +293,7 @@ def _refresh_google_token(force: bool = False) -> str:
         if not force and _usable(tokens):
             return tokens["access_token"]
 
-        if not tokens.get("refresh_token"):
+        if not _is_token(tokens.get("refresh_token")):
             raise TokenRefused("No Google refresh token. Run: google-health-mcp auth")
 
         client = _load_google_client()

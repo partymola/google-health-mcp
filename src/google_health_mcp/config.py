@@ -91,6 +91,13 @@ def missing_scopes(granted) -> list[str] | None:
     return [n for n in GOOGLE_SCOPE_READERS if f"{GOOGLE_SCOPE_PREFIX}{n}.readonly" not in held]
 
 
+def _is_token(value) -> bool:
+    """Whether a value is RFC 6749's token syntax (A.12, A.17) and not only spaces."""
+    return (
+        isinstance(value, str) and value.isascii() and value.isprintable() and bool(value.strip())
+    )
+
+
 GOOGLE_CALLBACK_PORT = 8081
 GOOGLE_REDIRECT_URI = f"http://localhost:{GOOGLE_CALLBACK_PORT}"
 

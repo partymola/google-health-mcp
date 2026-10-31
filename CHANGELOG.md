@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A refused refresh is no longer reported as needing `google-health-mcp auth` when the token file changed meanwhile. The server uses the new token if it is still valid. Otherwise it reports a network error, and the next call refreshes from the new file. A sync records that as an error, which `doctor` grades as a warning rather than a failure.
 - A token refresh answered with success but no usable access token no longer asks for `google-health-mcp auth`. The answer is reported as a network error, which `doctor` grades as a warning. The next call asks again with the same grant. An access token that is not text is no longer saved.
 - A refresh answer no longer overwrites the stored refresh token with an unusable one. Unusable means blank, not text, or outside the characters OAuth allows in a token. The stored copy is the only one. `google-health-mcp auth` now fails rather than saving a consent holding an unusable access or refresh token.
+- An unusable token already in the token file is no longer used. Unusable means blank, not text, or outside the characters OAuth allows in a token. A blank or numeric access token used to be sent to Google. One with a line break or non-ASCII text failed the request with an unexpected error. An unusable access token is now refreshed. An unusable refresh token is no longer sent, and the error asks for `google-health-mcp auth`. `doctor` now reports either one as a failure.
 
 ## 1.9.0 - 2026-10-20
 

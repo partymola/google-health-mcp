@@ -592,6 +592,36 @@ class TestTheTokenFileIsTheOnlyCopy:
         with patch("urllib.request.urlopen", return_value=self._respond({"access_token": "new"})):
             assert auth.refresh_google_token() == "new"
 
+    @_NOT_A_TOKEN
+    def test_a_stored_access_token_that_is_not_a_token_is_refreshed_rather_than_sent(
+        self, tmp_path, value
+    ):
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, access_token=value, expires_at=time.time() + 3600)
+        with patch("urllib.request.urlopen", return_value=self._respond({"access_token": "new"})):
+            assert auth.refresh_google_token() == "new"
+
+    @_NOT_A_TOKEN
+    def test_a_stored_refresh_token_that_is_not_a_token_is_not_sent(self, tmp_path, value):
+        """The credential file itself is what judged it, so this one is a refusal."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path, refresh_token=value)
+        with patch("urllib.request.urlopen") as request:
+            with pytest.raises(auth.TokenRefused) as caught:
+                auth.refresh_google_token()
+        assert not request.called
+        assert str(caught.value) == "No Google refresh token. Run: google-health-mcp auth"
+
+    def test_a_changed_file_holding_a_token_that_is_not_one_is_not_used(self, tmp_path):
+        """It would be sent in place of the token this refresh just obtained."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        urlopen = self._urlopen_writing(
+            tmp_path, {"access_token": "from_refresh"}, access_token=123, expires_at=9e12
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            assert auth.refresh_google_token() == "from_refresh"
+
     def test_a_valid_token_does_not_need_the_client_file(self, tmp_path):
         """Only a refresh uses it, so a moment when it cannot be read must not
         refuse a token that needs no refresh."""

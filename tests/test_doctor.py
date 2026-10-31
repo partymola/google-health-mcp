@@ -515,6 +515,48 @@ def test_a_missing_refresh_token_is_not_reassured_about(setup_paths):
     assert any(f.name == "credentials" and f.severity == doctor.FAIL for f in findings)
 
 
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("refresh_token", "   "),
+        ("refresh_token", "a\nb"),
+        ("refresh_token", 123),
+        ("refresh_token", ["x"]),
+        ("refresh_token", True),
+        ("access_token", 123),
+    ],
+    ids=["blank", "newline", "number", "array", "bool", "access-number"],
+)
+def test_a_token_the_server_will_not_use_is_not_reported_as_present(setup_paths, field, value):
+    """`auth` refuses or replaces these, so "present" is what sends nobody to fix it."""
+    config_dir, _db_path = setup_paths
+    _write_credentials(config_dir, tokens={field: value})
+
+    (credentials,) = [f for f in doctor.run_checks() if f.name == "credentials"]
+
+    assert credentials.severity == doctor.FAIL
+    assert field in credentials.detail
+
+
+def test_an_access_token_the_server_will_not_send_is_not_called_valid(setup_paths):
+    config_dir, _db_path = setup_paths
+    _write_credentials(config_dir, tokens={"access_token": 123})
+
+    assert not [f for f in doctor.run_checks() if f.name == "access token"]
+
+
+def test_tokens_in_googles_shape_are_reported_as_present(setup_paths):
+    config_dir, _db_path = setup_paths
+    _write_credentials(
+        config_dir,
+        tokens={"access_token": "ya29.a0AfB_c-d~+/=", "refresh_token": "1//0gabc-_DEF"},
+    )
+
+    (credentials,) = [f for f in doctor.run_checks() if f.name == "credentials"]
+
+    assert credentials.severity == doctor.OK
+
+
 def test_reports_an_expired_access_token_without_calling_the_network(setup_paths, monkeypatch):
     config_dir, _db_path = setup_paths
     _write_credentials(config_dir, expires_at=time.time() - 60)

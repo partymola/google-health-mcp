@@ -290,13 +290,13 @@ def _check_token_file() -> list[Finding]:
         ]
 
     findings = []
-    missing = [k for k in ("access_token", "refresh_token") if not data.get(k)]
+    missing = [k for k in ("access_token", "refresh_token") if not config._is_token(data.get(k))]
     if missing:
         findings.append(
             Finding(
                 "credentials",
                 FAIL,
-                f"google_tokens.json is missing: {', '.join(missing)}.",
+                f"google_tokens.json has no usable: {', '.join(missing)}.",
                 "Re-run `google-health-mcp auth`. If it still reports no refresh token, remove "
                 "the app's access at myaccount.google.com/permissions first and "
                 "authorise again.",
@@ -305,31 +305,8 @@ def _check_token_file() -> list[Finding]:
     else:
         findings.append(Finding("credentials", OK, "access and refresh tokens present"))
 
-    expires_at = data.get("expires_at")
-    when = _timestamp_or_none(expires_at)
-    if when is not None:
-        if expires_at < time.time():
-            findings.append(
-                Finding(
-                    "access token",
-                    OK,
-                    f"expired at {when:%Y-%m-%d %H:%M} - normal between syncs; "
-                    "it is refreshed on the next call.",
-                )
-            )
-        else:
-            findings.append(Finding("access token", OK, f"valid until {when:%Y-%m-%d %H:%M}"))
-    else:
-        findings.append(
-            Finding(
-                "access token",
-                WARN,
-                "expires_at is missing, not a number, or not a usable timestamp, "
-                "so expiry cannot be checked. A value in milliseconds rather than "
-                "seconds does this.",
-                "Re-run `google-health-mcp auth`.",
-            )
-        )
+    if "access_token" not in missing:
+        findings.extend(_check_access_token_expiry(data.get("expires_at")))
 
     findings.extend(_check_token_file_writability(path))
     if not missing:
@@ -339,6 +316,31 @@ def _check_token_file() -> list[Finding]:
         findings.extend(_check_short_lived_refresh_token(data))
         findings.extend(_check_refresh_token_age(path))
     return findings
+
+
+def _check_access_token_expiry(expires_at) -> list[Finding]:
+    when = _timestamp_or_none(expires_at)
+    if when is None:
+        return [
+            Finding(
+                "access token",
+                WARN,
+                "expires_at is missing, not a number, or not a usable timestamp, "
+                "so expiry cannot be checked. A value in milliseconds rather than "
+                "seconds does this.",
+                "Re-run `google-health-mcp auth`.",
+            )
+        ]
+    if expires_at < time.time():
+        return [
+            Finding(
+                "access token",
+                OK,
+                f"expired at {when:%Y-%m-%d %H:%M} - normal between syncs; "
+                "it is refreshed on the next call.",
+            )
+        ]
+    return [Finding("access token", OK, f"valid until {when:%Y-%m-%d %H:%M}")]
 
 
 def _check_token_file_writability(path: Path) -> list[Finding]:
