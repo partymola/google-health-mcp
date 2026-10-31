@@ -195,6 +195,13 @@ def _google_expires_in(payload: dict) -> float:
     return value
 
 
+def _is_token(value) -> bool:
+    """Whether a value is RFC 6749's token syntax (A.12, A.17) and not only spaces."""
+    return (
+        isinstance(value, str) and value.isascii() and value.isprintable() and bool(value.strip())
+    )
+
+
 def _google_token_store(payload: dict, previous: dict) -> dict:
     """Shape a token response for storage.
 
@@ -210,9 +217,10 @@ def _google_token_store(payload: dict, previous: dict) -> dict:
     so the expiry would never arrive. Carried forward, it means what it says
     whichever the truth is, and a consent (`previous` empty) replaces it.
     """
+    reissued = payload.get("refresh_token")
     store = {
         "access_token": payload["access_token"],
-        "refresh_token": payload.get("refresh_token") or previous.get("refresh_token", ""),
+        "refresh_token": reissued if _is_token(reissued) else previous.get("refresh_token", ""),
         "expires_at": time.time() + _google_expires_in(payload),
     }
     granted = payload.get("refresh_token_expires_in")
@@ -333,8 +341,7 @@ def _refresh_google_token(force: bool = False) -> str:
         except ValueError as e:
             raise RefreshNetworkError("Google returned an unreadable response.") from e
 
-        token = payload.get("access_token") if isinstance(payload, dict) else None
-        if not isinstance(token, str) or not token:
+        if not isinstance(payload, dict) or not _is_token(payload.get("access_token")):
             raise RefreshNetworkError("Google returned no access token.")
 
         refreshed = _google_token_store(payload, tokens)
@@ -488,13 +495,12 @@ def _finish_consent(raw):
     "not linked" answer fails it: any other failure of the check says nothing
     about the account.
     """
-    if not isinstance(raw, dict) or not raw.get("access_token"):
-        # A proxy answering 200 with HTML, or a bare scalar body, otherwise
-        # escapes to the CLI as a traceback from the main thread rather than
-        # being reported.
+    if not isinstance(raw, dict) or not _is_token(raw.get("access_token")):
+        # A truthy non-object gets this far, and would otherwise escape to the
+        # CLI as a traceback from the main thread rather than being reported.
         print("Google returned no access token.", file=sys.stderr)
         sys.exit(1)
-    if not raw.get("refresh_token"):
+    if not _is_token(raw.get("refresh_token")):
         print(
             "Google returned no refresh token, so unattended sync will not work. "
             "Revoke this app at myaccount.google.com/permissions and run auth again.",

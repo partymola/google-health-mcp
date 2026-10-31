@@ -52,6 +52,57 @@ def _http_error(code, body=b"{}"):
     return urllib.error.HTTPError("https://oauth2.googleapis.com/token", code, "err", {}, None)
 
 
+_NOT_A_TOKEN = pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "",
+        "   ",
+        "a\nb",
+        "a\tb",
+        "a\x00b",
+        "a\x7fb",
+        "中",
+        "é",
+        123,
+        True,
+        {"value": "x"},
+        ["x"],
+    ],
+    ids=[
+        "null",
+        "empty",
+        "blank",
+        "newline",
+        "tab",
+        "nul",
+        "delete",
+        "non-ascii",
+        "latin-1",
+        "number",
+        "bool",
+        "object",
+        "array",
+    ],
+)
+
+
+class TestTheTokenSyntax:
+    """RFC 6749's VSCHAR rule, which is wider than what a token usually looks like."""
+
+    @pytest.mark.parametrize(
+        "value",
+        ["ya29.a0AfB_c-d~+/=", "1//0gabc-_DEF", "!", "~", "a b"],
+        ids=["access-shape", "refresh-shape", "lowest", "highest", "interior-space"],
+    )
+    def test_a_token_in_the_syntax_is_accepted(self, value):
+        assert auth._is_token(value)
+
+    @_NOT_A_TOKEN
+    def test_anything_else_is_refused(self, value):
+        assert not auth._is_token(value)
+
+
 class TestTheGoogleClientFile:
     def test_googles_downloaded_desktop_format_is_read_as_is(self, tmp_path):
         _write_client(tmp_path)
@@ -127,6 +178,9 @@ class TestTheGoogleRefreshBoundary:
             {"scope": "granted"},
             {"access_token": None},
             {"access_token": ""},
+            {"access_token": "   "},
+            {"access_token": "a\nb"},
+            {"access_token": "中"},
             {"access_token": 123},
             {"access_token": True},
             {"access_token": {"value": "x"}},
@@ -140,6 +194,9 @@ class TestTheGoogleRefreshBoundary:
             "absent",
             "null",
             "empty",
+            "blank",
+            "newline",
+            "non-ascii",
             "number",
             "bool",
             "object",
@@ -230,6 +287,43 @@ class TestWhatARefreshStores:
             assert auth.refresh_google_token() == "new"
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert stored["refresh_token"] == "stored-refresh"
+
+    @_NOT_A_TOKEN
+    def test_an_unusable_refresh_token_keeps_the_stored_one(self, tmp_path, value):
+        """The file holds the only copy, so saving this loses a grant that still works."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        payload = {"access_token": "new", "refresh_token": value}
+        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+            assert auth.refresh_google_token() == "new"
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert stored["refresh_token"] == "stored-refresh"
+
+    def test_a_usable_refresh_token_replaces_the_stored_one(self, tmp_path):
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        payload = {"access_token": "new", "refresh_token": "reissued"}
+        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+            auth.refresh_google_token()
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert stored["refresh_token"] == "reissued"
+
+    def test_a_whole_answer_in_googles_shape_is_stored(self, tmp_path):
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        payload = {
+            "access_token": "ya29.a0AfB_c-d~+/=",
+            "expires_in": 3599,
+            "scope": "fictional-scope",
+            "token_type": "Bearer",
+        }
+        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+            assert auth.refresh_google_token() == "ya29.a0AfB_c-d~+/="
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert stored["access_token"] == "ya29.a0AfB_c-d~+/="
+        assert stored["refresh_token"] == "stored-refresh"
+        assert stored["scope"] == "fictional-scope"
+        assert abs(stored["expires_at"] - (time.time() + 3599)) < 5
 
     def test_an_access_token_defaults_to_an_hour(self, tmp_path):
         _write_client(tmp_path)
@@ -600,16 +694,59 @@ class TestFinishingAConsent:
 
     _RAW = {"access_token": "a", "refresh_token": "r", "scope": "x"}
 
-    def _finish(self, tmp_path, probe):
+    def _finish(self, tmp_path, probe, **overrides):
         from google_health_mcp import api
 
         _write_client(tmp_path)
         with patch.object(api, "google_get", probe):
             try:
-                auth._finish_consent(dict(self._RAW))
+                auth._finish_consent({**self._RAW, **overrides})
             except SystemExit as stop:
                 return stop.code
         return 0
+
+    def test_a_whole_answer_in_googles_shape_is_saved(self, tmp_path, capsys):
+        answer = {
+            "access_token": "ya29.a0AfB_c-d~+/=",
+            "refresh_token": "1//0gabc-_DEF",
+            "expires_in": 3599,
+            "scope": "fictional-scope",
+            "token_type": "Bearer",
+        }
+        assert self._finish(tmp_path, MagicMock(return_value={}), **answer) == 0
+        stored = json.loads((tmp_path / "google_tokens.json").read_text())
+        assert stored["access_token"] == "ya29.a0AfB_c-d~+/="
+        assert stored["refresh_token"] == "1//0gabc-_DEF"
+        assert stored["scope"] == "fictional-scope"
+        assert abs(stored["expires_at"] - (time.time() + 3599)) < 5
+
+    @_NOT_A_TOKEN
+    def test_a_consent_with_no_usable_access_token_saves_nothing(self, tmp_path, capsys, value):
+        _write_tokens(tmp_path)
+        before = (tmp_path / "google_tokens.json").read_bytes()
+        assert self._finish(tmp_path, MagicMock(return_value={}), access_token=value) == 1
+        assert "Google returned no access token." in capsys.readouterr().err
+        assert (tmp_path / "google_tokens.json").read_bytes() == before
+
+    @_NOT_A_TOKEN
+    def test_a_consent_with_no_usable_refresh_token_saves_nothing(self, tmp_path, capsys, value):
+        """Saved, unattended sync stops an hour later with "Setup complete" on screen."""
+        _write_tokens(tmp_path)
+        before = (tmp_path / "google_tokens.json").read_bytes()
+        assert self._finish(tmp_path, MagicMock(return_value={}), refresh_token=value) == 1
+        assert "Google returned no refresh token" in capsys.readouterr().err
+        assert (tmp_path / "google_tokens.json").read_bytes() == before
+
+    @pytest.mark.parametrize("body", [["access_token"], "access_token", 7])
+    def test_a_consent_answer_that_is_not_an_object_saves_nothing(self, tmp_path, capsys, body):
+        """It runs in the main thread, where nothing else would catch the traceback."""
+        _write_tokens(tmp_path)
+        before = (tmp_path / "google_tokens.json").read_bytes()
+        with pytest.raises(SystemExit) as stop:
+            auth._finish_consent(body)
+        assert stop.value.code == 1
+        assert "Google returned no access token." in capsys.readouterr().err
+        assert (tmp_path / "google_tokens.json").read_bytes() == before
 
     def test_the_tokens_are_saved_before_the_account_is_checked(self, tmp_path, capsys):
         """Saving first means a wrong-account grant is replaced by re-running
