@@ -144,7 +144,7 @@ Match on `check`, never on `name` or `detail`: the first is a stable identifier,
 
 **The exit code is 1 only when something is graded `fail`**, in both formats - a warning never changes it, which is the reason this flag exists: a stopped data series is a warning, so the exit code alone cannot tell you about the one failure most worth watching for.
 
-**Check `version` before trusting an absent `check`.** A release older than this one omits the field entirely and an older one still rejects `--json` and exits 2, so "no `stopped-series` finding" and "this build cannot report one" look identical without it. `version` is itself `null` when the package is run from a source tree with no installed distribution metadata - the payload is still emitted, since a diagnostic that dies on a half-configured install is worthless exactly when it is needed.
+**Check `version` before trusting an absent finding.** A build older than a check does not report it, so "no `series-never-filled` finding" and "this build cannot report one" look identical without it. A release before 1.1.0 rejects `--json` and exits 2. `version` is itself `null` when the package is run from a source tree with no installed distribution metadata - the payload is still emitted, since a diagnostic that dies on a half-configured install is worthless exactly when it is needed.
 
 The payload names the resolved config, database and credential paths, the same way the text report does. That is deliberate - it is what makes a wrong-path setup diagnosable - but a consumer that forwards the payload off the machine is disclosing them. No credential *values* appear in either format.
 
