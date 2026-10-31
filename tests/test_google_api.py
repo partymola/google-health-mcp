@@ -753,6 +753,47 @@ class TestAgainstTheRealGoogleRefresh:
             )
         assert not isinstance(caught.value, api.HealthAuthError)
 
+    def _refresh_answers_200_with_no_token(self, monkeypatch):
+        from google_health_mcp import auth
+
+        answer = MagicMock()
+        answer.read.return_value = json.dumps({"scope": "granted"}).encode()
+        answer.__enter__ = lambda s: s
+        answer.__exit__ = lambda *a: None
+        monkeypatch.setattr(auth.urllib.request, "urlopen", MagicMock(return_value=answer))
+
+    def test_a_200_with_no_token_is_a_network_error(self, monkeypatch):
+        from google_health_mcp import auth
+
+        self._refresh_answers_200_with_no_token(monkeypatch)
+        with pytest.raises(api.HealthAPIError) as caught:
+            self._list_with_token_file(
+                '{"access_token": "a", "refresh_token": "r", "expires_at": 0}'
+            )
+        assert type(caught.value) is api.HealthNetworkError
+        assert type(caught.value.__cause__) is auth.RefreshNetworkError
+
+    def test_a_sync_getting_a_200_with_no_token_does_not_fail_doctor(self, monkeypatch):
+        """Recorded as `auth_error`, doctor grades it FAIL and answers "run auth"."""
+        from google_health_mcp import db, doctor
+        from google_health_mcp.tools import sync_tools
+
+        self._refresh_answers_200_with_no_token(monkeypatch)
+        monkeypatch.setattr(config, "DB_PATH", db.DB_PATH)
+        (self.dir / "google_tokens.json").write_text(
+            '{"access_token": "a", "refresh_token": "r", "expires_at": 0}'
+        )
+        (self.dir / "google_client.json").write_text(
+            json.dumps({"installed": {"client_id": "fake-id", "client_secret": "fake-secret"}})
+        )
+        result = sync_tools.run_sync(["sleep"])
+        assert result["sleep"] == {
+            "status": "error",
+            "message": "Network error. Check your connection.",
+        }
+        (finding,) = doctor.check_sync_health()
+        assert finding.severity == doctor.WARN
+
 
 class TestAnEmptyWindow:
     def test_a_zero_length_window_asks_nothing(self):

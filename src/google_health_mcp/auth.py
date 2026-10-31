@@ -68,13 +68,13 @@ class TokenRefused(GoogleHealthError, RuntimeError):
 
 
 class RefreshNetworkError(GoogleHealthError, RuntimeError):
-    """The refresh request never got an answer.
+    """The refresh request got no usable answer.
 
     A RuntimeError like `TokenRefused`, because `_classify_google_refusal`
     returns one or the other under that type. It is a class of its own because
-    an unreachable server says nothing about whether the credentials are still
-    good, and telling the user to re-authorise would rotate a token file another
-    host may own.
+    an unreachable server, or an answer with no token in it, says nothing about
+    whether the credentials are still good, and telling the user to re-authorise
+    would rotate a token file another host may own.
     """
 
 
@@ -333,8 +333,9 @@ def _refresh_google_token(force: bool = False) -> str:
         except ValueError as e:
             raise RefreshNetworkError("Google returned an unreadable response.") from e
 
-        if not isinstance(payload, dict) or not payload.get("access_token"):
-            raise TokenRefused("Google returned no access token. Run: google-health-mcp auth")
+        token = payload.get("access_token") if isinstance(payload, dict) else None
+        if not isinstance(token, str) or not token:
+            raise RefreshNetworkError("Google returned no access token.")
 
         refreshed = _google_token_store(payload, tokens)
 
@@ -488,9 +489,9 @@ def _finish_consent(raw):
     about the account.
     """
     if not isinstance(raw, dict) or not raw.get("access_token"):
-        # Same guard the refresh path carries: a proxy answering 200 with
-        # HTML, or a bare scalar body, otherwise escapes to the CLI as a
-        # traceback from the main thread rather than being reported.
+        # A proxy answering 200 with HTML, or a bare scalar body, otherwise
+        # escapes to the CLI as a traceback from the main thread rather than
+        # being reported.
         print("Google returned no access token.", file=sys.stderr)
         sys.exit(1)
     if not raw.get("refresh_token"):

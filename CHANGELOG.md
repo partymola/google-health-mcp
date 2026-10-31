@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A running server no longer undoes a new consent. When its access token next expired, it refreshed with the grant it had first read. It then saved that old grant over the new one. A consent that added permissions could be lost within the hour.
 - A token refresh no longer saves over a token file that changed while its request to Google was in flight. The server uses the file's token if it is still valid.
 - A refused refresh is no longer reported as needing `google-health-mcp auth` when the token file changed meanwhile. The server uses the new token if it is still valid. Otherwise it reports a network error, and the next call refreshes from the new file. A sync records that as an error, which `doctor` grades as a warning rather than a failure.
+- A token refresh answered with success but no usable access token no longer asks for `google-health-mcp auth`. The answer is reported as a network error, which `doctor` grades as a warning. The next call asks again with the same grant. An access token that is not text is no longer saved.
 
 ## 1.9.0 - 2026-10-20
 

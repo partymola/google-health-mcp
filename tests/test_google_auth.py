@@ -121,6 +121,48 @@ class TestTheGoogleRefreshBoundary:
             with pytest.raises(auth.RefreshNetworkError):
                 auth.refresh_google_token()
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"scope": "granted"},
+            {"access_token": None},
+            {"access_token": ""},
+            {"access_token": 123},
+            {"access_token": True},
+            {"access_token": {"value": "x"}},
+            {"access_token": ["x"]},
+            ["access_token"],
+            "access_token",
+            7,
+            None,
+        ],
+        ids=[
+            "absent",
+            "null",
+            "empty",
+            "number",
+            "bool",
+            "object",
+            "array",
+            "body-array",
+            "body-string",
+            "body-number",
+            "body-null",
+        ],
+    )
+    def test_a_200_with_no_usable_token_is_not_a_refusal(self, tmp_path, body):
+        """RFC 6749 refuses with a 400 or 401, so this judged nothing: "run auth"
+        would rewrite a token file another host may own, for a grant still good."""
+        _write_client(tmp_path)
+        _write_tokens(tmp_path)
+        before = (tmp_path / "google_tokens.json").read_bytes()
+        answer = TestWhatARefreshStores()._respond(body)
+        with patch("urllib.request.urlopen", return_value=answer):
+            with pytest.raises(auth.RefreshNetworkError) as caught:
+                auth.refresh_google_token()
+        assert str(caught.value) == "Google returned no access token."
+        assert (tmp_path / "google_tokens.json").read_bytes() == before
+
 
 class TestTheTestingStatusDiagnostic:
     """The failure every install hits a week in, and that nobody diagnoses unaided."""
@@ -257,13 +299,6 @@ class TestWhatARefreshStores:
             assert not request.called
             assert auth.refresh_google_token(force=True) == "new"
         assert auth.granted_scopes() == "granted"
-
-    def test_a_response_with_no_token_is_a_refusal(self, tmp_path):
-        _write_client(tmp_path)
-        _write_tokens(tmp_path)
-        with patch("urllib.request.urlopen", return_value=self._respond({"scope": "..."})):
-            with pytest.raises(auth.TokenRefused):
-                auth.refresh_google_token()
 
 
 class TestTheTokenFileIsTheOnlyCopy:
