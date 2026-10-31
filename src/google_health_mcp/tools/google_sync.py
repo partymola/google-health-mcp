@@ -299,17 +299,6 @@ def _rollup_values(data_type: str, start, end, field: str, extract) -> dict:
     return values
 
 
-#: The four activity levels, kept for a derivation if one is ever added.
-#: Nothing reads this (see `sync_activity`). Google's vocabulary maps one to
-#: one onto the columns.
-_ACTIVITY_LEVEL_COLUMNS = {
-    "VERY_ACTIVE": "very_active_minutes",
-    "MODERATELY_ACTIVE": "fairly_active_minutes",
-    "LIGHTLY_ACTIVE": "lightly_active_minutes",
-    "SEDENTARY": "sedentary_minutes",
-}
-
-
 def sync_activity(conn, start, end) -> int:
     """A day of activity, assembled from four rollups.
 
