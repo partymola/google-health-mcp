@@ -466,10 +466,8 @@ def check_authorisation() -> list[Finding]:
     a new one leaves every existing install short until the person authorises
     again.
     """
-    granted = None if config.OFFLINE_MODE else _token_scope()
-    if granted is not None:
-        missing = config.missing_scopes(granted)
-    else:
+    missing = config.missing_scopes(None if config.OFFLINE_MODE else _token_scope())
+    if missing is None:
         missing = db.recorded_missing_scopes(config.DB_PATH)
 
     if missing is None:

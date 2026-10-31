@@ -199,12 +199,14 @@ class TestMissingScopes:
         granted = self._full(*names[1:]) + f" {config.GOOGLE_SCOPE_PREFIX}{names[0]}.writeonly"
         assert config.missing_scopes(granted) == [names[0]]
 
-    @pytest.mark.parametrize("granted", [None, 7, ["x"]], ids=["none", "int", "list"])
+    @pytest.mark.parametrize(
+        "granted", [None, 7, ["x"], "", "   "], ids=["none", "int", "list", "empty", "blank"]
+    )
     def test_nothing_recorded_is_unknown_rather_than_everything_missing(self, granted):
         assert config.missing_scopes(granted) is None
 
-    def test_an_empty_grant_lacks_everything(self):
-        assert config.missing_scopes("") == list(config.GOOGLE_SCOPE_READERS)
+    def test_a_grant_of_something_else_lacks_everything(self):
+        assert config.missing_scopes("openid") == list(config.GOOGLE_SCOPE_READERS)
 
 
 class TestConfigOverrides:

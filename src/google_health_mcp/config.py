@@ -82,10 +82,11 @@ GOOGLE_SCOPES = " ".join(f"{GOOGLE_SCOPE_PREFIX}{name}.readonly" for name in GOO
 def missing_scopes(granted) -> list[str] | None:
     """The requested scopes a grant lacks, by short name, or None if unknown.
 
-    `granted` is the space-separated string Google reports; anything else
-    means nothing was recorded, which is not the same as nothing granted.
+    `granted` is the space-separated string Google reports; anything else,
+    a blank string included, means nothing was recorded, which is not the same
+    as nothing granted.
     """
-    if not isinstance(granted, str):
+    if not isinstance(granted, str) or not granted.strip():
         return None
     held = set(granted.split())
     return [n for n in GOOGLE_SCOPE_READERS if f"{GOOGLE_SCOPE_PREFIX}{n}.readonly" not in held]

@@ -705,12 +705,26 @@ class TestTheGrantedScopesAreRecorded:
         store = auth._google_token_store({"access_token": "a"}, {"refresh_token": "r"})
         assert "scope" not in store
 
-    @pytest.mark.parametrize("value", [["a"], 7, None, True], ids=["list", "int", "null", "bool"])
+    @pytest.mark.parametrize(
+        "value",
+        [["a"], 7, None, True, "", "   "],
+        ids=["list", "int", "null", "bool", "empty", "blank"],
+    )
     def test_an_unusable_one_keeps_the_stored_one(self, value):
         store = auth._google_token_store(
             {"access_token": "a", "scope": value}, {"scope": self._GRANTED}
         )
         assert store["scope"] == self._GRANTED
+
+    @pytest.mark.parametrize("value", ["", "   "], ids=["empty", "blank"])
+    def test_a_consent_reporting_a_blank_one_records_none(self, value):
+        """Blank reads as a grant holding nothing, so every later sync skips every type."""
+        assert "scope" not in auth._google_token_store({"access_token": "a", "scope": value}, {})
+
+    @pytest.mark.parametrize("value", ["", "   "], ids=["empty", "blank"])
+    def test_a_blank_one_on_disk_is_not_carried_forward(self, value):
+        """Carried, it goes on reading as a grant holding nothing after the refresh."""
+        assert "scope" not in auth._google_token_store({"access_token": "a"}, {"scope": value})
 
 
 class TestFinishingAConsent:

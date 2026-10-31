@@ -10,7 +10,8 @@ hold no token and read only the shared database.
 import json
 import os
 import sys
-from unittest.mock import patch
+import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -110,7 +111,16 @@ class TestWhatTheTokenSaysWasGranted:
         assert auth.granted_scopes() == "x y"
 
     @pytest.mark.parametrize(
-        "contents", [None, "{not json", "[]", '{"access_token": "a"}', '{"scope": 7}']
+        "contents",
+        [
+            None,
+            "{not json",
+            "[]",
+            '{"access_token": "a"}',
+            '{"scope": 7}',
+            '{"scope": ""}',
+            '{"scope": "   "}',
+        ],
     )
     def test_anything_else_is_unknown_and_never_raises(self, tmp_path, monkeypatch, contents):
         path = tmp_path / "google_tokens.json"
@@ -148,8 +158,8 @@ class TestTheSyncRecordsIt:
         def refused(conn, start, end):
             raise sync_tools.api.HealthAuthError("refused")
 
-        self._sync(_granted(), handlers={"t": refused})
-        assert db.recorded_missing_scopes() == list(config.GOOGLE_SCOPE_READERS)
+        self._sync(_granted(*list(config.GOOGLE_SCOPE_READERS)[2:]), handlers={"t": refused})
+        assert db.recorded_missing_scopes() == _SOME
 
     def test_failing_to_record_it_does_not_fail_the_sync(self, db_path, monkeypatch):
         def broken(*a, **k):
@@ -382,6 +392,97 @@ class TestAMissingScopeSkipsRatherThanFails:
         ):
             google_sync.sync_account(tmp_db, None, None)
         assert set(db.query_account(tmp_db)) == {"settings", "irn_profile"}
+
+
+class TestABlankScopeInTheTokenFile:
+    """A blank scope reads as unknown, so the next sync refreshes and replaces it.
+
+    Read as a grant holding nothing, every type is skipped, a skipped type sends
+    no request that could bring a refresh, and only `auth` gets the install out.
+    """
+
+    _BLANK = pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "spaces"])
+
+    @pytest.fixture
+    def token_file(self, tmp_path, monkeypatch, db_path):
+        path = tmp_path / "google_tokens.json"
+        monkeypatch.setattr(config, "GOOGLE_TOKENS_PATH", path)
+        monkeypatch.setattr(config, "GOOGLE_CLIENT_PATH", tmp_path / "google_client.json")
+        monkeypatch.setattr(config, "OFFLINE_MODE", False)
+        config.GOOGLE_CLIENT_PATH.write_text(
+            json.dumps({"installed": {"client_id": "fake-id", "client_secret": "fake-secret"}})
+        )
+        return path
+
+    def _write(self, path, scope):
+        path.write_text(
+            json.dumps(
+                {
+                    "access_token": "a",
+                    "refresh_token": "r",
+                    "expires_at": time.time() + 3600,
+                    "scope": scope,
+                }
+            )
+        )
+
+    def _sync_with_refresh(self, **urlopen):
+        ran = []
+        handlers = {
+            "sleep": lambda c, s, e: ran.append("sleep") or 0,
+            "weight": lambda c, s, e: ran.append("weight") or 0,
+        }
+        with patch("urllib.request.urlopen", **urlopen) as request:
+            result = sync_tools.run_sync(["sleep", "weight"], handlers=handlers)
+        assert ran == ["sleep", "weight"]
+        assert {r["status"] for r in result.values()} == {"ok"}
+        return request
+
+    def _answer(self, **body):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"access_token": "new", **body}
+        ).encode()
+        return response
+
+    @_BLANK
+    def test_a_sync_refreshes_it_and_reads_every_type(self, token_file, blank):
+        self._write(token_file, blank)
+        full = _granted(*config.GOOGLE_SCOPE_READERS)
+        request = self._sync_with_refresh(return_value=self._answer(scope=full))
+        assert request.call_count == 1
+        assert json.loads(token_file.read_text())["scope"] == full
+        assert db.recorded_missing_scopes() == []
+
+    @_BLANK
+    def test_a_refresh_reporting_none_leaves_it_unknown(self, token_file, blank):
+        self._write(token_file, blank)
+        self._sync_with_refresh(return_value=self._answer())
+        assert "scope" not in json.loads(token_file.read_text())
+        assert db.recorded_missing_scopes() is None
+
+    @_BLANK
+    def test_a_refresh_that_fails_still_reads_every_type(self, token_file, blank):
+        self._write(token_file, blank)
+        self._sync_with_refresh(side_effect=OSError())
+        assert db.recorded_missing_scopes() is None
+
+    @_BLANK
+    def test_doctor_does_not_call_it_a_grant_lacking_everything(self, token_file, blank):
+        self._write(token_file, blank)
+        (finding,) = doctor.check_authorisation()
+        assert finding.severity == doctor.OK
+        assert "not recorded" in finding.detail
+
+    @_BLANK
+    def test_doctor_falls_back_to_the_record(self, token_file, db_path, blank):
+        self._write(token_file, blank)
+        _record(db_path, _SOME)
+        (finding,) = doctor.check_authorisation()
+        assert finding.severity == doctor.WARN
+        assert all(name in finding.detail for name in _SOME)
+        held = set(config.GOOGLE_SCOPE_READERS) - set(_SOME)
+        assert not any(name in finding.detail for name in held)
 
 
 class TestEveryResponseCarriesIt:

@@ -225,9 +225,9 @@ def _google_token_store(payload: dict, previous: dict) -> dict:
     # The scopes Google reports granting, which is the only record of what a
     # grant can read: a refresh never widens it. Absent means unknown, not none.
     scope = payload.get("scope")
-    if isinstance(scope, str):
+    if isinstance(scope, str) and scope.strip():
         store["scope"] = scope
-    elif isinstance(previous.get("scope"), str):
+    elif isinstance(previous.get("scope"), str) and previous["scope"].strip():
         store["scope"] = previous["scope"]
     return store
 
@@ -383,7 +383,7 @@ def granted_scopes() -> str | None:
         scope = json.loads(config.GOOGLE_TOKENS_PATH.read_text()).get("scope")
     except Exception:
         return None
-    return scope if isinstance(scope, str) else None
+    return scope if isinstance(scope, str) and scope.strip() else None
 
 
 def setup_google_auth():
