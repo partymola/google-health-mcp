@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A token answer's `expires_in` now gets the default lifetime if it is not a finite number. `Infinity` used to be stored as never expiring, so that token was never refreshed. `NaN` and `-Infinity` read as already expired. A `refresh_token_expires_in` that is not a finite number now records no expiry. `google-health-mcp auth` no longer warns of a week's expiry for one. An oversized integer in either field no longer ends `google-health-mcp auth` in a traceback.
 - A token file whose `expires_at` is not a finite number is refreshed on the next call, which replaces the value. `doctor` no longer asks for `google-health-mcp auth` over one. A stored refresh token expiry that is not a number is now dropped. It used to hide the short-lived token warning in `doctor`.
 - A reply or credential file nested too deeply to parse is now treated as unreadable. A data reply or a token refresh reply reports an unreadable response and saves nothing. A token or client file nested that deeply asks for `google-health-mcp auth`. `doctor` reports such a file as unreadable rather than as a bug in `doctor`.
+- `doctor` no longer says an access token is valid in its last five minutes. The next call refreshes such a token rather than sending it, and `doctor` now says so.
 
 ## 1.9.0 - 2026-10-20
 

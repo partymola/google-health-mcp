@@ -117,6 +117,9 @@ GOOGLE_REDIRECT_URI = f"http://localhost:{GOOGLE_CALLBACK_PORT}"
 # response omits it.
 GOOGLE_TOKEN_LIFETIME = 3600
 
+# How long before its expiry an access token stops being sent and is refreshed.
+ACCESS_TOKEN_REFRESH_BUFFER = 300
+
 # Every type the cache holds. Read by the CLI's `--types` help and by
 # `doctor`'s freshness check, and asserted equal to `GOOGLE_SYNC_HANDLERS` by
 # a seam test - a type here with no handler is a table nothing can ever fill.

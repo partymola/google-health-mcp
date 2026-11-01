@@ -259,9 +259,12 @@ def _classify_google_refusal(error: urllib.error.HTTPError) -> RuntimeError:
 
 
 def _usable(tokens: dict) -> bool:
-    """Whether the stored access token can be sent, with the 5-minute buffer."""
+    """Whether the stored access token can be sent, outside the refresh buffer."""
     expires_at = tokens["expires_at"] if _is_number(tokens.get("expires_at")) else 0
-    return _is_token(tokens.get("access_token")) and time.time() < expires_at - 300
+    return (
+        _is_token(tokens.get("access_token"))
+        and time.time() < expires_at - config.ACCESS_TOKEN_REFRESH_BUFFER
+    )
 
 
 def _reread_tokens():

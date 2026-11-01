@@ -339,12 +339,14 @@ def _check_access_token_expiry(expires_at) -> list[Finding]:
                 "Re-run `google-health-mcp auth`.",
             )
         ]
-    if expires_at < time.time():
+    now = time.time()
+    if expires_at <= now + config.ACCESS_TOKEN_REFRESH_BUFFER:
+        state = "expired" if expires_at < now else "expires"
         return [
             Finding(
                 "access token",
                 OK,
-                f"expired at {when:%Y-%m-%d %H:%M} - normal between syncs; "
+                f"{state} at {when:%Y-%m-%d %H:%M} - normal between syncs; "
                 "it is refreshed on the next call.",
             )
         ]
