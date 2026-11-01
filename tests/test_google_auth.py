@@ -53,6 +53,14 @@ def _http_error(code, body=b"{}"):
     return urllib.error.HTTPError("https://oauth2.googleapis.com/token", code, "err", {}, None)
 
 
+def _respond(payload):
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(payload).encode()
+    resp.__enter__ = lambda s: s
+    resp.__exit__ = lambda *a: None
+    return resp
+
+
 _NOT_A_TOKEN = pytest.mark.parametrize(
     "value",
     [
@@ -216,7 +224,7 @@ class TestTheGoogleRefreshBoundary:
         _write_client(tmp_path)
         _write_tokens(tmp_path)
         before = (tmp_path / "google_tokens.json").read_bytes()
-        answer = TestWhatARefreshStores()._respond(body)
+        answer = _respond(body)
         with patch("urllib.request.urlopen", return_value=answer):
             with pytest.raises(auth.RefreshNetworkError) as caught:
                 auth.refresh_google_token()
@@ -227,7 +235,7 @@ class TestTheGoogleRefreshBoundary:
         """The client reports it as a network error, so the log is what tells them apart."""
         _write_client(tmp_path)
         _write_tokens(tmp_path)
-        answer = TestWhatARefreshStores()._respond({"scope": "SECRETMARKER"})
+        answer = _respond({"scope": "SECRETMARKER"})
         with caplog.at_level("WARNING", logger=auth.__name__):
             with patch("urllib.request.urlopen", return_value=answer):
                 with pytest.raises(auth.RefreshNetworkError):
@@ -240,7 +248,7 @@ class TestTheGoogleRefreshBoundary:
         _write_client(tmp_path)
         _write_tokens(tmp_path, expires_at=time.time() + 3600)
         before = (tmp_path / "google_tokens.json").read_bytes()
-        answer = TestWhatARefreshStores()._respond({"scope": "granted"})
+        answer = _respond({"scope": "granted"})
         with patch("urllib.request.urlopen", return_value=answer):
             with pytest.raises(auth.RefreshNetworkError):
                 auth.refresh_google_token(force=True)
@@ -299,18 +307,11 @@ class TestTheTestingStatusDiagnostic:
 
 
 class TestWhatARefreshStores:
-    def _respond(self, payload):
-        resp = MagicMock()
-        resp.read.return_value = json.dumps(payload).encode()
-        resp.__enter__ = lambda s: s
-        resp.__exit__ = lambda *a: None
-        return resp
-
     def test_a_response_without_a_refresh_token_keeps_the_stored_one(self, tmp_path):
         """Google's refresh tokens do not rotate, so a response omits it."""
         _write_client(tmp_path)
         _write_tokens(tmp_path)
-        with patch("urllib.request.urlopen", return_value=self._respond({"access_token": "new"})):
+        with patch("urllib.request.urlopen", return_value=_respond({"access_token": "new"})):
             assert auth.refresh_google_token() == "new"
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert stored["refresh_token"] == "stored-refresh"
@@ -321,7 +322,7 @@ class TestWhatARefreshStores:
         _write_client(tmp_path)
         _write_tokens(tmp_path)
         payload = {"access_token": "new", "refresh_token": value}
-        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+        with patch("urllib.request.urlopen", return_value=_respond(payload)):
             assert auth.refresh_google_token() == "new"
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert stored["refresh_token"] == "stored-refresh"
@@ -330,7 +331,7 @@ class TestWhatARefreshStores:
         _write_client(tmp_path)
         _write_tokens(tmp_path)
         payload = {"access_token": "new", "refresh_token": "reissued"}
-        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+        with patch("urllib.request.urlopen", return_value=_respond(payload)):
             auth.refresh_google_token()
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert stored["refresh_token"] == "reissued"
@@ -344,7 +345,7 @@ class TestWhatARefreshStores:
             "scope": "fictional-scope",
             "token_type": "Bearer",
         }
-        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+        with patch("urllib.request.urlopen", return_value=_respond(payload)):
             assert auth.refresh_google_token() == "ya29.a0AfB_c-d~+/="
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert stored["access_token"] == "ya29.a0AfB_c-d~+/="
@@ -355,7 +356,7 @@ class TestWhatARefreshStores:
     def test_an_access_token_defaults_to_an_hour(self, tmp_path):
         _write_client(tmp_path)
         _write_tokens(tmp_path)
-        with patch("urllib.request.urlopen", return_value=self._respond({"access_token": "new"})):
+        with patch("urllib.request.urlopen", return_value=_respond({"access_token": "new"})):
             auth.refresh_google_token()
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert abs(stored["expires_at"] - (time.time() + config.GOOGLE_TOKEN_LIFETIME)) < 5
@@ -365,7 +366,7 @@ class TestWhatARefreshStores:
         _write_client(tmp_path)
         _write_tokens(tmp_path)
         payload = {"access_token": "new", "refresh_token_expires_in": 604799}
-        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+        with patch("urllib.request.urlopen", return_value=_respond(payload)):
             auth.refresh_google_token()
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert abs(stored["refresh_token_expires_at"] - (time.time() + 604799)) < 5
@@ -382,7 +383,7 @@ class TestWhatARefreshStores:
         granted = time.time() + 600
         _write_tokens(tmp_path, refresh_token_expires_at=granted)
         payload = {"access_token": "new", "refresh_token_expires_in": 604799}
-        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+        with patch("urllib.request.urlopen", return_value=_respond(payload)):
             auth.refresh_google_token()
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert stored["refresh_token_expires_at"] == granted
@@ -430,7 +431,7 @@ class TestWhatARefreshStores:
         _write_client(tmp_path)
         _write_tokens(tmp_path)
         payload = {"access_token": "new", "expires_in": value}
-        with patch("urllib.request.urlopen", return_value=self._respond(payload)):
+        with patch("urllib.request.urlopen", return_value=_respond(payload)):
             auth.refresh_google_token()
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert abs(stored["expires_at"] - (time.time() + config.GOOGLE_TOKEN_LIFETIME)) < 5
@@ -440,7 +441,7 @@ class TestWhatARefreshStores:
         _write_client(tmp_path)
         _write_tokens(tmp_path, expires_at=time.time() + 3600)
         payload = {"access_token": "new", "scope": "granted"}
-        with patch("urllib.request.urlopen", return_value=self._respond(payload)) as request:
+        with patch("urllib.request.urlopen", return_value=_respond(payload)) as request:
             assert auth.refresh_google_token() == "stored-access"
             assert not request.called
             assert auth.refresh_google_token(force=True) == "new"
@@ -454,8 +455,6 @@ class TestTheTokenFileIsTheOnlyCopy:
     at, because the property is about what is on disk, not about anything the
     module holds.
     """
-
-    _respond = TestWhatARefreshStores._respond
 
     @staticmethod
     def _rewrite_unnoticeably(path, text):
@@ -484,7 +483,7 @@ class TestTheTokenFileIsTheOnlyCopy:
                 _write_tokens(tmp_path, **tokens)
             if isinstance(then, Exception):
                 raise then
-            return self._respond(then)
+            return _respond(then)
 
         return urlopen
 
@@ -505,7 +504,7 @@ class TestTheTokenFileIsTheOnlyCopy:
 
         def urlopen(request, timeout=None):
             sent.append(parse_qs(request.data.decode())["client_id"][0])
-            return self._respond({"access_token": "new"})
+            return _respond({"access_token": "new"})
 
         with patch("urllib.request.urlopen", urlopen):
             auth.refresh_google_token(force=True)
@@ -662,7 +661,7 @@ class TestTheTokenFileIsTheOnlyCopy:
     def test_a_stored_token_with_no_access_token_is_refreshed_rather_than_sent(self, tmp_path):
         _write_client(tmp_path)
         _write_tokens(tmp_path, access_token="", expires_at=time.time() + 3600)
-        with patch("urllib.request.urlopen", return_value=self._respond({"access_token": "new"})):
+        with patch("urllib.request.urlopen", return_value=_respond({"access_token": "new"})):
             assert auth.refresh_google_token() == "new"
 
     @_NOT_A_TOKEN
@@ -671,7 +670,7 @@ class TestTheTokenFileIsTheOnlyCopy:
     ):
         _write_client(tmp_path)
         _write_tokens(tmp_path, access_token=value, expires_at=time.time() + 3600)
-        with patch("urllib.request.urlopen", return_value=self._respond({"access_token": "new"})):
+        with patch("urllib.request.urlopen", return_value=_respond({"access_token": "new"})):
             assert auth.refresh_google_token() == "new"
 
     @_NOT_A_TOKEN
@@ -704,7 +703,7 @@ class TestTheTokenFileIsTheOnlyCopy:
             '{"access_token": "stored-access", "refresh_token": "stored-refresh", '
             f'"expires_at": {literal}}}'
         )
-        answer = self._respond({"access_token": "new"})
+        answer = _respond({"access_token": "new"})
         with patch("urllib.request.urlopen", return_value=answer) as request:
             assert auth.refresh_google_token() == "new"
             assert auth.refresh_google_token() == "new"
@@ -738,7 +737,7 @@ class TestTheTokenFileIsTheOnlyCopy:
                 # Long enough for an unserialised second call to reach the
                 # network; with the lock it is still waiting when this returns.
                 other.join(timeout=0.5)
-            return self._respond({"access_token": f"from_refresh_{len(posts)}"})
+            return _respond({"access_token": f"from_refresh_{len(posts)}"})
 
         with patch("urllib.request.urlopen", urlopen):
             first = auth.refresh_google_token()
@@ -776,9 +775,7 @@ class TestTheGrantedScopesAreRecorded:
         _write_client(tmp_path)
         _write_tokens(tmp_path)
         payload = {"access_token": "new", "scope": self._GRANTED}
-        with patch(
-            "urllib.request.urlopen", return_value=TestWhatARefreshStores()._respond(payload)
-        ):
+        with patch("urllib.request.urlopen", return_value=_respond(payload)):
             auth.refresh_google_token()
         stored = json.loads((tmp_path / "google_tokens.json").read_text())
         assert stored["scope"] == self._GRANTED
