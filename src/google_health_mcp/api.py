@@ -375,7 +375,7 @@ def google_get(path: str, params: dict, body: dict | None = None) -> dict:
 
     try:
         body = json.loads(raw)
-    except ValueError as e:
+    except (ValueError, RecursionError) as e:
         raise HealthAPIError("Google returned an unreadable response.") from e
     if not isinstance(body, dict):
         raise HealthAPIError("Google returned an unexpected response shape.")

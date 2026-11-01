@@ -105,7 +105,7 @@ def _load_json(path):
     """
     try:
         data = json.loads(path.read_text())
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, RecursionError) as e:
         raise TokenRefused(
             f"{path.name} is missing or unreadable. Run: google-health-mcp auth"
         ) from e
@@ -328,7 +328,7 @@ def _refresh_google_token(force: bool = False) -> str:
 
         try:
             payload = json.loads(raw)
-        except ValueError as e:
+        except (ValueError, RecursionError) as e:
             raise RefreshNetworkError("Google returned an unreadable response.") from e
 
         if not isinstance(payload, dict) or not _is_token(payload.get("access_token")):

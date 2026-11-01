@@ -195,7 +195,7 @@ def _check_client_file() -> list[Finding]:
 
     try:
         data = json.loads(path.read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return [
             Finding(
                 "app config",
@@ -269,7 +269,7 @@ def _check_token_file() -> list[Finding]:
 
     try:
         data = json.loads(path.read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return [
             Finding(
                 "credentials",
