@@ -1,4 +1,4 @@
-"""Configuration paths and constants for the Google Health MCP server."""
+"""Configuration paths, constants and shared token checks for the Google Health MCP server."""
 
 import math
 import os
@@ -93,7 +93,7 @@ def missing_scopes(granted) -> list[str] | None:
     return [n for n in GOOGLE_SCOPE_READERS if f"{GOOGLE_SCOPE_PREFIX}{n}.readonly" not in held]
 
 
-def _is_number(value) -> bool:
+def is_number(value) -> bool:
     """Whether a JSON value is a number a float holds: `true` is an int, and `Infinity` parses."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
@@ -103,7 +103,7 @@ def _is_number(value) -> bool:
         return False
 
 
-def _is_token(value) -> bool:
+def is_token(value) -> bool:
     """Whether a value is RFC 6749's token syntax (A.12, A.17) and not only spaces."""
     return (
         isinstance(value, str) and value.isascii() and value.isprintable() and bool(value.strip())

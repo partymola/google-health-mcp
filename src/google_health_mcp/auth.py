@@ -25,7 +25,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import config
-from .config import _is_number, _is_token
 from .errors import GoogleHealthError
 
 logger = logging.getLogger(__name__)
@@ -191,7 +190,7 @@ def _google_expires_in(payload: dict) -> float:
     arithmetic, in the setup flow's main thread where nothing catches it.
     """
     value = payload.get("expires_in")
-    return value if _is_number(value) else config.GOOGLE_TOKEN_LIFETIME
+    return value if config.is_number(value) else config.GOOGLE_TOKEN_LIFETIME
 
 
 def _google_token_store(payload: dict, previous: dict) -> dict:
@@ -212,13 +211,15 @@ def _google_token_store(payload: dict, previous: dict) -> dict:
     reissued = payload.get("refresh_token")
     store = {
         "access_token": payload["access_token"],
-        "refresh_token": reissued if _is_token(reissued) else previous.get("refresh_token", ""),
+        "refresh_token": reissued
+        if config.is_token(reissued)
+        else previous.get("refresh_token", ""),
         "expires_at": time.time() + _google_expires_in(payload),
     }
     granted = payload.get("refresh_token_expires_in")
-    if _is_number(previous.get("refresh_token_expires_at")):
+    if config.is_number(previous.get("refresh_token_expires_at")):
         store["refresh_token_expires_at"] = previous["refresh_token_expires_at"]
-    elif _is_number(granted):
+    elif config.is_number(granted):
         store["refresh_token_expires_at"] = time.time() + granted
     # The scopes Google reports granting, which is the only record of what a
     # grant can read: a refresh never widens it. Absent means unknown, not none.
@@ -260,9 +261,9 @@ def _classify_google_refusal(error: urllib.error.HTTPError) -> RuntimeError:
 
 def _usable(tokens: dict) -> bool:
     """Whether the stored access token can be sent, outside the refresh buffer."""
-    expires_at = tokens["expires_at"] if _is_number(tokens.get("expires_at")) else 0
+    expires_at = tokens["expires_at"] if config.is_number(tokens.get("expires_at")) else 0
     return (
-        _is_token(tokens.get("access_token"))
+        config.is_token(tokens.get("access_token"))
         and time.time() < expires_at - config.ACCESS_TOKEN_REFRESH_BUFFER
     )
 
@@ -292,7 +293,7 @@ def _refresh_google_token(force: bool = False) -> str:
         if not force and _usable(tokens):
             return tokens["access_token"]
 
-        if not _is_token(tokens.get("refresh_token")):
+        if not config.is_token(tokens.get("refresh_token")):
             raise TokenRefused("No Google refresh token. Run: google-health-mcp auth")
 
         client = _load_google_client()
@@ -334,7 +335,7 @@ def _refresh_google_token(force: bool = False) -> str:
         except (ValueError, RecursionError) as e:
             raise RefreshNetworkError("Google returned an unreadable response.") from e
 
-        if not isinstance(payload, dict) or not _is_token(payload.get("access_token")):
+        if not isinstance(payload, dict) or not config.is_token(payload.get("access_token")):
             logger.warning("Google answered a refresh with no access token")
             raise RefreshNetworkError("Google returned no access token.")
 
@@ -489,12 +490,12 @@ def _finish_consent(raw):
     "not linked" answer fails it: any other failure of the check says nothing
     about the account.
     """
-    if not isinstance(raw, dict) or not _is_token(raw.get("access_token")):
+    if not isinstance(raw, dict) or not config.is_token(raw.get("access_token")):
         # A truthy non-object gets this far, and would otherwise escape to the
         # CLI as a traceback from the main thread rather than being reported.
         print("Google returned no access token.", file=sys.stderr)
         sys.exit(1)
-    if not _is_token(raw.get("refresh_token")):
+    if not config.is_token(raw.get("refresh_token")):
         print(
             "Google returned no refresh token, so unattended sync will not work. "
             "Revoke this app at myaccount.google.com/permissions and run auth again.",

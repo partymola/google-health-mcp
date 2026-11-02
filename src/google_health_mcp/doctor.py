@@ -290,7 +290,7 @@ def _check_token_file() -> list[Finding]:
         ]
 
     findings = []
-    missing = [k for k in ("access_token", "refresh_token") if not config._is_token(data.get(k))]
+    missing = [k for k in ("access_token", "refresh_token") if not config.is_token(data.get(k))]
     if missing:
         findings.append(
             Finding(
@@ -319,7 +319,7 @@ def _check_token_file() -> list[Finding]:
 
 
 def _check_access_token_expiry(expires_at) -> list[Finding]:
-    if not config._is_number(expires_at):
+    if not config.is_number(expires_at):
         return [
             Finding(
                 "access token",

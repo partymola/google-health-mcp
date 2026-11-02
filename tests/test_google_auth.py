@@ -105,11 +105,11 @@ class TestTheTokenSyntax:
         ids=["access-shape", "refresh-shape", "lowest", "highest", "interior-space"],
     )
     def test_a_token_in_the_syntax_is_accepted(self, value):
-        assert auth._is_token(value)
+        assert config.is_token(value)
 
     @_NOT_A_TOKEN
     def test_anything_else_is_refused(self, value):
-        assert not auth._is_token(value)
+        assert not config.is_token(value)
 
 
 class TestTheGoogleClientFile:
