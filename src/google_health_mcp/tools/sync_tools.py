@@ -98,7 +98,12 @@ def _run_sync_types(conn, data_types, results, since_date, until_date, today, da
     # refresh, so one is asked for now; otherwise the first sync after an
     # upgrade fetches what the grant lacks and fails on the 403. If it cannot
     # be had, unknown is treated as held and everything is fetched as before.
-    if not config.OFFLINE_MODE and auth.granted_scopes() is None:
+    # A scope holding nothing requested may only be junk, and every type would
+    # be skipped with no request left to correct it, so it gets one refresh too.
+    lacking = config.missing_scopes(auth.granted_scopes())
+    if not config.OFFLINE_MODE and (
+        lacking is None or len(lacking) == len(config.GOOGLE_SCOPE_READERS)
+    ):
         try:
             auth.refresh_google_token(force=True)
         except (auth.TokenRefused, auth.RefreshNetworkError):

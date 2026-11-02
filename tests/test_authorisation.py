@@ -394,14 +394,18 @@ class TestAMissingScopeSkipsRatherThanFails:
         assert set(db.query_account(tmp_db)) == {"settings", "irn_profile"}
 
 
-class TestABlankScopeInTheTokenFile:
-    """A blank scope reads as unknown, so the next sync refreshes and replaces it.
+class TestAScopeThatReadsAsHoldingNothing:
+    """A sync refreshes a stored scope holding nothing requested before it skips.
 
     Read as a grant holding nothing, every type is skipped, a skipped type sends
     no request that could bring a refresh, and only `auth` gets the install out.
+    A blank scope also reads as unknown, so its types are fetched either way.
     """
 
     _BLANK = pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "spaces"])
+    _JUNK = pytest.mark.parametrize(
+        "junk", ["\ud800", "x", "openid email"], ids=["surrogate", "word", "other-scopes"]
+    )
 
     @pytest.fixture
     def token_file(self, tmp_path, monkeypatch, db_path):
@@ -483,6 +487,49 @@ class TestABlankScopeInTheTokenFile:
         assert all(name in finding.detail for name in _SOME)
         held = set(config.GOOGLE_SCOPE_READERS) - set(_SOME)
         assert not any(name in finding.detail for name in held)
+
+    @_JUNK
+    def test_a_junk_scope_is_refreshed_before_anything_is_skipped(self, token_file, junk):
+        self._write(token_file, junk)
+        full = _granted(*config.GOOGLE_SCOPE_READERS)
+        request = self._sync_with_refresh(return_value=self._answer(scope=full))
+        assert request.call_count == 1
+        assert json.loads(token_file.read_text())["scope"] == full
+        assert db.recorded_missing_scopes() == []
+
+    def _sync_skipped(self, **urlopen):
+        ran = []
+        handlers = {
+            "sleep": lambda c, s, e: ran.append("sleep") or 0,
+            "weight": lambda c, s, e: ran.append("weight") or 0,
+        }
+        with patch("urllib.request.urlopen", **urlopen) as request:
+            result = sync_tools.run_sync(["sleep", "weight"], handlers=handlers)
+        assert ran == []
+        assert {r["status"] for r in result.values()} == {"skipped"}
+        assert request.call_count == 1
+
+    def test_an_empty_grant_is_refreshed_once_and_then_skipped(self, token_file):
+        self._write(token_file, "openid email")
+        self._sync_skipped(return_value=self._answer(scope="openid email"))
+        assert db.recorded_missing_scopes() == list(config.GOOGLE_SCOPE_READERS)
+
+    @_JUNK
+    def test_a_junk_scope_stays_skipped_when_the_refresh_fails(self, token_file, junk):
+        self._write(token_file, junk)
+        self._sync_skipped(side_effect=OSError())
+
+    def test_a_grant_holding_some_of_them_is_not_refreshed(self, token_file):
+        self._write(token_file, _granted("sleep", "health_metrics_and_measurements"))
+        request = self._sync_with_refresh(return_value=self._answer())
+        assert request.call_count == 0
+
+    def test_an_offline_host_does_not_refresh_a_junk_scope(self, token_file, monkeypatch):
+        monkeypatch.setattr(config, "OFFLINE_MODE", True)
+        self._write(token_file, "openid email")
+        with patch.object(sync_tools.auth, "refresh_google_token") as refresh:
+            sync_tools.run_sync(["sleep"], handlers={"sleep": lambda c, s, e: 0})
+        refresh.assert_not_called()
 
 
 class TestEveryResponseCarriesIt:
