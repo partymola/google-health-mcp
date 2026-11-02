@@ -196,8 +196,8 @@ def test_survives_an_expires_at_in_milliseconds(setup_paths):
 
 @pytest.mark.parametrize(
     "value",
-    [float("inf"), float("-inf"), float("nan"), 10**400, "soon", True, None],
-    ids=["infinity", "negative-infinity", "nan", "oversized", "str", "bool", "null"],
+    [float("inf"), float("-inf"), float("nan"), 10**400, "soon", True, None, -1e20],
+    ids=["infinity", "negative-infinity", "nan", "oversized", "str", "bool", "null", "far-past"],
 )
 def test_an_expiry_the_next_refresh_replaces_does_not_advise_auth(setup_paths, value):
     """Re-authorising rewrites a file this host may not own, for what clears by itself."""
@@ -520,7 +520,7 @@ def test_a_client_file_with_no_secret_is_reported(setup_paths):
 
 
 def test_a_missing_refresh_token_is_not_reassured_about(setup_paths):
-    """ "No 7-day expiry marker" beside "missing: refresh_token" reads as health."""
+    """ "No 7-day expiry marker" beside "no usable refresh token" reads as health."""
     config_dir, _db_path = setup_paths
     _write_credentials(config_dir)
     (config_dir / "google_tokens.json").write_text(
@@ -534,33 +534,88 @@ def test_a_missing_refresh_token_is_not_reassured_about(setup_paths):
 
 
 @pytest.mark.parametrize(
-    "field, value",
-    [
-        ("refresh_token", "   "),
-        ("refresh_token", "a\nb"),
-        ("refresh_token", 123),
-        ("refresh_token", ["x"]),
-        ("refresh_token", True),
-        ("access_token", 123),
-    ],
-    ids=["blank", "newline", "number", "array", "bool", "access-number"],
+    "value",
+    ["   ", "a\nb", 123, ["x"], True],
+    ids=["blank", "newline", "number", "array", "bool"],
 )
-def test_a_token_the_server_will_not_use_is_not_reported_as_present(setup_paths, field, value):
-    """`auth` refuses or replaces these, so "present" is what sends nobody to fix it."""
+def test_a_token_the_server_will_not_use_is_not_reported_as_present(setup_paths, value):
+    """`auth` refuses these, so "present" is what sends nobody to fix it."""
     config_dir, _db_path = setup_paths
-    _write_credentials(config_dir, tokens={field: value})
+    _write_credentials(config_dir, tokens={"refresh_token": value})
 
     (credentials,) = [f for f in doctor.run_checks() if f.name == "credentials"]
 
     assert credentials.severity == doctor.FAIL
-    assert field in credentials.detail
+    assert "refresh token" in credentials.detail
+
+
+@pytest.mark.parametrize(
+    "value", [123, "   ", "a\nb", None], ids=["number", "blank", "newline", "null"]
+)
+def test_a_bad_access_token_beside_a_good_refresh_token_is_not_a_failure(setup_paths, value):
+    """The next call repairs it with one request, and `auth` would rewrite a file
+    this host may not own."""
+    config_dir, _db_path = setup_paths
+    _write_credentials(config_dir, tokens={"access_token": value})
+
+    findings = doctor.run_checks()
+
+    assert not [f for f in findings if f.severity == doctor.FAIL]
+    (access,) = [f for f in findings if f.name == "access token"]
+    assert access.severity == doctor.OK
+    assert "next call refreshes" in access.detail
+    assert access.fix is None
+
+
+def test_a_bad_access_token_does_not_hide_the_short_lived_warning(setup_paths):
+    config_dir, _db_path = setup_paths
+    _write_credentials(
+        config_dir,
+        tokens={"access_token": 123, "refresh_token_expires_at": time.time() + 6 * 86400},
+    )
+
+    assert [
+        f for f in doctor.run_checks() if f.name == "refresh token" and f.severity == doctor.FAIL
+    ]
 
 
 def test_an_access_token_the_server_will_not_send_is_not_called_valid(setup_paths):
     config_dir, _db_path = setup_paths
     _write_credentials(config_dir, tokens={"access_token": 123})
 
-    assert not [f for f in doctor.run_checks() if f.name == "access token"]
+    (access,) = [f for f in doctor.run_checks() if f.name == "access token"]
+
+    assert "valid until" not in access.detail
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        {"expires_at": 0},
+        {"expires_at": "soon"},
+        {"expires_at": float("inf")},
+        {"access_token": 123},
+    ],
+    ids=["expired", "str", "infinity", "bad-access-token"],
+)
+def test_a_token_the_next_call_cannot_refresh_is_not_said_to_be(setup_paths, tokens):
+    """With no refresh token to send, that call raises `TokenRefused` with no request."""
+    config_dir, _db_path = setup_paths
+    _write_credentials(config_dir, tokens={"refresh_token": "   ", **tokens})
+
+    (access,) = [f for f in doctor.run_checks() if f.name == "access token"]
+
+    assert "next call refreshes" not in access.detail
+    assert "next call is refused" in access.detail
+
+
+def test_a_valid_token_beside_a_bad_refresh_token_is_still_sent(setup_paths):
+    config_dir, _db_path = setup_paths
+    _write_credentials(config_dir, tokens={"refresh_token": "   "})
+
+    (access,) = [f for f in doctor.run_checks() if f.name == "access token"]
+
+    assert "valid until" in access.detail
 
 
 def test_tokens_in_googles_shape_are_reported_as_present(setup_paths):

@@ -41,5 +41,5 @@ def test_a_token_the_next_call_replaces_is_said_to_be_refreshed(access_finding, 
     finding = access_finding(_NOW + offset)
     assert finding.severity == doctor.OK
     assert word in finding.detail
-    assert "refreshed on the next call" in finding.detail
+    assert "the next call refreshes it" in finding.detail
     assert finding.fix is None

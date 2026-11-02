@@ -290,46 +290,48 @@ def _check_token_file() -> list[Finding]:
         ]
 
     findings = []
-    missing = [k for k in ("access_token", "refresh_token") if not config.is_token(data.get(k))]
-    if missing:
+    can_refresh = config.is_token(data.get("refresh_token"))
+    if can_refresh:
+        findings.append(Finding("credentials", OK, "refresh token present"))
+    else:
         findings.append(
             Finding(
                 "credentials",
                 FAIL,
-                f"google_tokens.json has no usable: {', '.join(missing)}.",
+                "google_tokens.json has no usable refresh token.",
                 "Re-run `google-health-mcp auth`. If it still reports no refresh token, remove "
                 "the app's access at myaccount.google.com/permissions first and "
                 "authorise again.",
             )
         )
-    else:
-        findings.append(Finding("credentials", OK, "access and refresh tokens present"))
 
-    if "access_token" not in missing:
-        findings.extend(_check_access_token_expiry(data.get("expires_at")))
+    findings.extend(_check_access_token(data, can_refresh))
 
     findings.extend(_check_token_file_writability(path))
-    if not missing:
+    if can_refresh:
         # Both read the refresh token's state, and there is none to describe:
-        # "no 7-day expiry marker" beside "missing: refresh_token" reassures
+        # "no 7-day expiry marker" beside "no usable refresh token" reassures
         # about a credential that is not there.
         findings.extend(_check_short_lived_refresh_token(data))
         findings.extend(_check_refresh_token_age(path))
     return findings
 
 
-def _check_access_token_expiry(expires_at) -> list[Finding]:
-    if not config.is_number(expires_at):
-        return [
-            Finding(
-                "access token",
-                OK,
-                "expires_at is missing or not a finite number, so the next call "
-                "refreshes the token and replaces it.",
-            )
-        ]
+def _check_access_token(data: dict, can_refresh: bool) -> list[Finding]:
+    """What the next call does with the stored access token, as `auth._usable` decides."""
+    expires_at = data.get("expires_at")
     when = _timestamp_or_none(expires_at)
-    if when is None:
+    now = time.time()
+    if not config.is_token(data.get("access_token")):
+        state = "no usable access token is stored"
+    elif not config.is_number(expires_at):
+        state = "expires_at is missing or not a finite number"
+    elif expires_at <= now + config.ACCESS_TOKEN_REFRESH_BUFFER:
+        if when is None:
+            state = "expires_at is long past"
+        else:
+            state = f"{'expired' if expires_at < now else 'expires'} at {when:%Y-%m-%d %H:%M}"
+    elif when is None:
         return [
             Finding(
                 "access token",
@@ -339,18 +341,14 @@ def _check_access_token_expiry(expires_at) -> list[Finding]:
                 "Re-run `google-health-mcp auth`.",
             )
         ]
-    now = time.time()
-    if expires_at <= now + config.ACCESS_TOKEN_REFRESH_BUFFER:
-        state = "expired" if expires_at < now else "expires"
-        return [
-            Finding(
-                "access token",
-                OK,
-                f"{state} at {when:%Y-%m-%d %H:%M} - normal between syncs; "
-                "it is refreshed on the next call.",
-            )
-        ]
-    return [Finding("access token", OK, f"valid until {when:%Y-%m-%d %H:%M}")]
+    else:
+        return [Finding("access token", OK, f"valid until {when:%Y-%m-%d %H:%M}")]
+    outcome = (
+        "the next call refreshes it"
+        if can_refresh
+        else "the next call is refused, as no usable refresh token is stored"
+    )
+    return [Finding("access token", OK, f"{state}; {outcome}.")]
 
 
 def _check_token_file_writability(path: Path) -> list[Finding]:
