@@ -51,7 +51,7 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 
 ## Requirements
 
-- Python 3.13+ (tested on 3.13 and 3.14, on Linux, macOS and Windows, in CI)
+- Python 3.13+ (tested on 3.13, 3.14 and 3.15, on Linux, macOS and Windows, in CI)
 - A Google account with health data, and a Google Cloud project to authorise against. **No billing account is needed** - the console offers a free trial throughout setup and you can decline all of it.
 
 ## Setup
