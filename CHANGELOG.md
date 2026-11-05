@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - An empty answer from a query tool called with `live=True` no longer says "Try live=True". The call has just re-fetched the window, so the hint sent the model to repeat it. The tool's own note, such as "Requires sleep tracking.", is still given. An empty answer from the cache still offers the re-fetch. Every query tool's re-fetch hint now has the same wording.
+- A query tool that fails while reading the cache closes its database connection there and then, rather than leaving it open until the error is cleaned up.
 
 ## 1.11.0 - 2026-11-05
 

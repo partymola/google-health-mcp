@@ -42,9 +42,10 @@ async def health_get_skin_temperature(
 
     def _query():
         conn = db.get_db()
-        rows = db.query_skin_temperature(conn, start.isoformat(), end.isoformat())
-        conn.close()
-        return rows
+        try:
+            return db.query_skin_temperature(conn, start.isoformat(), end.isoformat())
+        finally:
+            conn.close()
 
     entries = await anyio.to_thread.run_sync(_query)
 
@@ -94,9 +95,10 @@ async def health_get_core_temperature(
 
     def _query():
         conn = db.get_db()
-        rows = db.query_core_temperature(conn, start.isoformat(), end.isoformat())
-        conn.close()
-        return rows
+        try:
+            return db.query_core_temperature(conn, start.isoformat(), end.isoformat())
+        finally:
+            conn.close()
 
     entries = await anyio.to_thread.run_sync(_query)
 

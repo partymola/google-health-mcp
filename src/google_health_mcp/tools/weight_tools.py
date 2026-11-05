@@ -38,9 +38,10 @@ async def health_get_weight(
 
     def _query():
         conn = db.get_db()
-        rows = db.query_weight(conn, start.isoformat(), end.isoformat())
-        conn.close()
-        return rows
+        try:
+            return db.query_weight(conn, start.isoformat(), end.isoformat())
+        finally:
+            conn.close()
 
     entries = await anyio.to_thread.run_sync(_query)
 

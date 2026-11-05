@@ -42,9 +42,10 @@ async def health_get_cardio_fitness(
 
     def _query():
         conn = db.get_db()
-        rows = db.query_cardio_fitness(conn, start.isoformat(), end.isoformat())
-        conn.close()
-        return rows
+        try:
+            return db.query_cardio_fitness(conn, start.isoformat(), end.isoformat())
+        finally:
+            conn.close()
 
     entries = await anyio.to_thread.run_sync(_query)
 

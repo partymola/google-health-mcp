@@ -45,9 +45,10 @@ async def health_get_spo2(
 
     def _query():
         conn = db.get_db()
-        rows = db.query_spo2(conn, start.isoformat(), end.isoformat())
-        conn.close()
-        return rows
+        try:
+            return db.query_spo2(conn, start.isoformat(), end.isoformat())
+        finally:
+            conn.close()
 
     entries = await anyio.to_thread.run_sync(_query)
 

@@ -45,9 +45,10 @@ async def health_get_ecg(
 
     def _query():
         conn = db.get_db()
-        rows = db.query_ecg(conn, start.isoformat(), end.isoformat(), include_waveform)
-        conn.close()
-        return rows
+        try:
+            return db.query_ecg(conn, start.isoformat(), end.isoformat(), include_waveform)
+        finally:
+            conn.close()
 
     rows = await anyio.to_thread.run_sync(_query)
 
@@ -91,9 +92,10 @@ async def health_get_irregular_rhythm(
 
     def _query():
         conn = db.get_db()
-        rows = db.query_irn(conn, start.isoformat(), end.isoformat())
-        conn.close()
-        return rows
+        try:
+            return db.query_irn(conn, start.isoformat(), end.isoformat())
+        finally:
+            conn.close()
 
     rows = await anyio.to_thread.run_sync(_query)
 
