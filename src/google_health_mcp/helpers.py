@@ -20,7 +20,7 @@ from .errors import GoogleHealthError, InvalidDateError
 def format_response(result: Any) -> str:
     """JSON-serialize a result for MCP transport."""
     if isinstance(result, (dict, list)):
-        return json.dumps(result, indent=2, default=str)
+        return json.dumps(result, default=str)
     elif result is None:
         return json.dumps(None)
     else:
@@ -133,7 +133,7 @@ def _annotate_offline(result: str) -> str:
     hint = parsed.get("hint")
     if isinstance(hint, str) and "live=True" in hint:
         parsed["hint"] = _OFFLINE_HINT
-    return json.dumps(parsed, indent=2, default=str)
+    return json.dumps(parsed, default=str)
 
 
 def missing_scopes_note(missing: list[str]) -> str:
@@ -161,7 +161,7 @@ def _annotate_authorisation(result: str) -> str:
     if not isinstance(parsed, dict):
         return result
     parsed["authorisation"] = missing_scopes_note(missing)
-    return json.dumps(parsed, indent=2, default=str)
+    return json.dumps(parsed, default=str)
 
 
 def require_auth(func):

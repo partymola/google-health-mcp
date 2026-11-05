@@ -74,7 +74,8 @@ def _isolate_from_ambient_env(monkeypatch):
     """Keep the developer's own environment out of every test.
 
     A shell that exports these - and one that runs a sync by hand usually
-    does - otherwise changes what the suite asserts against.
+    does - otherwise changes what the suite asserts against. `config` reads
+    the offline flag at import, so clearing the variable alone leaves it set.
     """
     for var in (
         "GOOGLE_HEALTH_MCP_OFFLINE",
@@ -82,6 +83,7 @@ def _isolate_from_ambient_env(monkeypatch):
         "GOOGLE_HEALTH_MCP_DB_PATH",
     ):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(config, "OFFLINE_MODE", False)
 
 
 @pytest.fixture

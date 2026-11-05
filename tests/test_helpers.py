@@ -1,10 +1,11 @@
 """Tests for helpers module: date parsing, formatting, response formatting."""
 
+import json
 from datetime import date, timedelta
 
 import pytest
 
-from google_health_mcp import helpers
+from google_health_mcp import config, db, helpers
 from google_health_mcp.errors import InvalidDateError
 from google_health_mcp.helpers import format_duration, format_response, parse_date
 
@@ -206,3 +207,47 @@ class TestFormatResponse:
     def test_date_serialization(self):
         result = format_response({"d": date(2026, 3, 15)})
         assert "2026-03-15" in result
+
+    @pytest.mark.parametrize(
+        ("result", "expected"),
+        [
+            ({"b": "é", "a": date(2026, 1, 1)}, '{"b": "\\u00e9", "a": "2026-01-01"}'),
+            (
+                ["é", {"b": [1, {"a": date(2026, 1, 1)}]}],
+                '["\\u00e9", {"b": [1, {"a": "2026-01-01"}]}]',
+            ),
+        ],
+    )
+    def test_a_reply_is_its_compact_json(self, result, expected):
+        # Indented, a reply's size grows with the square of its nesting.
+        assert format_response(result) == expected == json.dumps(result, default=str)
+
+
+class TestTheAnnotatedReplyStaysCompact:
+    """The notes `require_auth` adds re-serialise the reply, so they must not indent it."""
+
+    _REPLY = {"b": "é", "a": date(2026, 1, 1)}
+
+    @staticmethod
+    async def _call(monkeypatch, missing):
+        monkeypatch.setattr(db, "recorded_missing_scopes", lambda: missing)
+
+        @helpers.require_auth
+        async def tool():
+            return format_response(TestTheAnnotatedReplyStaysCompact._REPLY)
+
+        return await tool()
+
+    async def test_the_offline_tag(self, monkeypatch):
+        monkeypatch.setattr(config, "OFFLINE_MODE", True)
+        reply = await self._call(monkeypatch, None)
+        assert reply == '{"b": "\\u00e9", "a": "2026-01-01", "offline_mode": true}'
+
+    async def test_the_authorisation_note(self, monkeypatch, tmp_path):
+        for name in ("GOOGLE_CLIENT_PATH", "GOOGLE_TOKENS_PATH"):
+            path = tmp_path / name
+            path.write_text("{}")
+            monkeypatch.setattr(helpers, name, path)
+        note = helpers.missing_scopes_note(["fictional.readonly"])
+        reply = await self._call(monkeypatch, ["fictional.readonly"])
+        assert reply == json.dumps({"b": "é", "a": "2026-01-01", "authorisation": note})

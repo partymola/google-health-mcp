@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A `compare` that cannot be parsed is refused as an error, like any other bad date, rather than returned as an `error` field inside a normal reply.
+- Tool results are compact JSON rather than indented. Indentation made a result's size grow with the square of its nesting, so a deeply nested reply from Google could become megabytes. Only whitespace changes.
 
 ### Packaging
 
