@@ -5,7 +5,7 @@ from datetime import date
 import anyio
 
 from .. import db
-from ..helpers import LIVE_HINT, format_response, require_auth
+from ..helpers import empty_answer, format_response, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -39,12 +39,7 @@ async def health_get_profile(live: bool = False) -> str:
 
     stored = await anyio.to_thread.run_sync(_query)
     if not stored:
-        return format_response(
-            {
-                "message": "No profile or settings have been fetched yet.",
-                "hint": LIVE_HINT,
-            }
-        )
+        return empty_answer("No profile or settings have been fetched yet.", live)
     response = {}
     for resource in ("profile", "settings", "irn_profile"):
         record = stored.get(resource) or {}

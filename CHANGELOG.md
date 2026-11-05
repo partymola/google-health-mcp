@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- An empty answer from a query tool called with `live=True` no longer says "Try live=True". The call has just re-fetched the window, so the hint sent the model to repeat it. The tool's own note, such as "Requires sleep tracking.", is still given. An empty answer from the cache still offers the re-fetch. Every query tool's re-fetch hint now has the same wording.
+
 ## 1.11.0 - 2026-11-05
 
 ### Fixed

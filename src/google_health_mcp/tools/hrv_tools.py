@@ -3,7 +3,7 @@
 import anyio
 
 from .. import db
-from ..helpers import format_response, parse_date, require_auth
+from ..helpers import empty_answer, format_response, parse_date, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -48,11 +48,6 @@ async def health_get_hrv(
     entries = await anyio.to_thread.run_sync(_query)
 
     if not entries:
-        return format_response(
-            {
-                "message": "No HRV data found for this period.",
-                "hint": "Try live=True to re-fetch this window from the API.",
-            }
-        )
+        return empty_answer("No HRV data found for this period.", live)
 
     return format_response({"hrv": entries, "count": len(entries)})

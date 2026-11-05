@@ -3,7 +3,7 @@
 import anyio
 
 from .. import db
-from ..helpers import format_response, parse_date, require_auth
+from ..helpers import empty_answer, format_response, parse_date, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -52,14 +52,10 @@ async def health_get_ecg(
     rows = await anyio.to_thread.run_sync(_query)
 
     if not rows:
-        return format_response(
-            {
-                "message": "No ECG readings found for this period.",
-                "hint": (
-                    "ECG readings are taken by hand on a supported watch. "
-                    "Try live=True to re-fetch this window."
-                ),
-            }
+        return empty_answer(
+            "No ECG readings found for this period.",
+            live,
+            "ECG readings are taken by hand on a supported watch.",
         )
 
     return format_response({"ecg": rows, "count": len(rows)})
@@ -102,14 +98,10 @@ async def health_get_irregular_rhythm(
     rows = await anyio.to_thread.run_sync(_query)
 
     if not rows:
-        return format_response(
-            {
-                "message": "No irregular rhythm notifications found for this period.",
-                "hint": (
-                    "These are raised by the watch and are rare. "
-                    "Try live=True to re-fetch this window."
-                ),
-            }
+        return empty_answer(
+            "No irregular rhythm notifications found for this period.",
+            live,
+            "These are raised by the watch and are rare.",
         )
 
     return format_response({"irregular_rhythm": rows, "count": len(rows)})

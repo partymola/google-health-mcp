@@ -104,17 +104,31 @@ def format_duration(minutes: int | float | None) -> str:
 
 # --- Auth decorator ---
 
-# Empty-cache results carry a "Try live=True" hint (wording varies per tool).
-# In offline mode live=True is unavailable, so any such hint is rewritten on
-# the way out (see _annotate_offline). A raised refusal never passes through
-# that, so it asks for the hint instead (errors.wants_live_hint) and this is
-# the one place that chooses the wording.
+# An empty answer from the cache carries LIVE_HINT, after the tool's own note
+# if it has one (see empty_answer). In offline mode live=True is unavailable,
+# so any hint naming it is rewritten on the way out (see _annotate_offline). A
+# raised refusal never passes through that, so it asks for the hint instead
+# (errors.wants_live_hint) and this is the one place that chooses the wording.
 _OFFLINE_HINT = (
     "Offline mode is on (GOOGLE_HEALTH_MCP_OFFLINE); the host that owns the cache must "
     "sync this period. Live fetch is disabled here."
 )
 
 LIVE_HINT = "Try live=True to re-fetch this window from the API."
+
+
+def empty_answer(message: str, live: bool, note: str | None = None) -> str:
+    """The reply to a query that found nothing.
+
+    `note` is what the data needs to exist at all, and is said either way. The
+    re-fetch hint goes only with a cache read: a live call has just re-fetched
+    the window, so offering it again sends the model to repeat that call.
+    """
+    hint = " ".join(part for part in (note, None if live else LIVE_HINT) if part)
+    reply = {"message": message}
+    if hint:
+        reply["hint"] = hint
+    return format_response(reply)
 
 
 def _annotate_offline(result: str) -> str:

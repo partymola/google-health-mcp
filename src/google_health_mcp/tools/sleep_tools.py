@@ -3,7 +3,7 @@
 import anyio
 
 from .. import db
-from ..helpers import LIVE_HINT, format_response, parse_date, require_auth
+from ..helpers import empty_answer, format_response, parse_date, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -46,12 +46,7 @@ async def health_get_sleep(
     entries = await anyio.to_thread.run_sync(_query)
 
     if not entries:
-        return format_response(
-            {
-                "message": "No sleep data found for this period.",
-                "hint": "Try live=True to re-fetch this window from the API.",
-            }
-        )
+        return empty_answer("No sleep data found for this period.", live)
 
     return format_response({"sleep": entries, "count": len(entries)})
 
@@ -106,12 +101,7 @@ async def health_get_sleep_sessions(
     sessions = await anyio.to_thread.run_sync(_query)
 
     if not sessions:
-        return format_response(
-            {
-                "message": "No sleep sessions found for this period.",
-                "hint": LIVE_HINT,
-            }
-        )
+        return empty_answer("No sleep sessions found for this period.", live)
 
     for session in sessions:
         sleep = (session.get("record") or {}).get("sleep")

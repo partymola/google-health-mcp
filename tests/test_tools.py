@@ -554,11 +554,12 @@ class TestOfflineMode:
 
     @patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH")
     @patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH")
-    async def test_variant_live_hint_rewritten_offline(
+    async def test_a_live_hint_behind_a_note_is_rewritten_offline(
         self, mock_tokens_path, mock_config_path, monkeypatch, tmp_path
     ):
-        # cardio_fitness uses a non-canonical "Try live=True" hint; it must still
-        # be rewritten offline so a cache-only host is never told to go live.
+        # cardio_fitness puts its own note before the live hint, and
+        # _annotate_offline matches "live=True" anywhere in the hint, so a
+        # cache-only host is still never told to go live.
         mock_config_path.exists.return_value = False
         mock_tokens_path.exists.return_value = False
         monkeypatch.setattr("google_health_mcp.config.OFFLINE_MODE", True)

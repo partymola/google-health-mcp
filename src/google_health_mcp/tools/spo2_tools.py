@@ -3,7 +3,7 @@
 import anyio
 
 from .. import db
-from ..helpers import format_response, parse_date, require_auth
+from ..helpers import empty_answer, format_response, parse_date, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -52,11 +52,6 @@ async def health_get_spo2(
     entries = await anyio.to_thread.run_sync(_query)
 
     if not entries:
-        return format_response(
-            {
-                "message": "No SpO2 data found for this period.",
-                "hint": "Try live=True to re-fetch this window.",
-            }
-        )
+        return empty_answer("No SpO2 data found for this period.", live)
 
     return format_response({"spo2": entries, "count": len(entries)})

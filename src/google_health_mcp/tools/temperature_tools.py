@@ -3,7 +3,7 @@
 import anyio
 
 from .. import db
-from ..helpers import format_response, parse_date, require_auth
+from ..helpers import empty_answer, format_response, parse_date, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -49,13 +49,10 @@ async def health_get_skin_temperature(
     entries = await anyio.to_thread.run_sync(_query)
 
     if not entries:
-        return format_response(
-            {
-                "message": "No skin temperature data found for this period.",
-                "hint": (
-                    "Try live=True to re-fetch this window. Requires sleep tracking and baseline."
-                ),
-            }
+        return empty_answer(
+            "No skin temperature data found for this period.",
+            live,
+            "Requires sleep tracking and baseline.",
         )
 
     return format_response({"skin_temperature": entries, "count": len(entries)})
@@ -104,14 +101,10 @@ async def health_get_core_temperature(
     entries = await anyio.to_thread.run_sync(_query)
 
     if not entries:
-        return format_response(
-            {
-                "message": "No core temperature data found for this period.",
-                "hint": (
-                    "Core temperature is only present when readings are logged "
-                    "manually in the app. Try live=True to re-fetch this window."
-                ),
-            }
+        return empty_answer(
+            "No core temperature data found for this period.",
+            live,
+            "Core temperature is only present when readings are logged manually in the app.",
         )
 
     return format_response({"core_temperature": entries, "count": len(entries)})

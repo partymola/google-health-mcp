@@ -6,7 +6,7 @@ import anyio
 
 from .. import db
 from ..errors import UnknownExerciseType
-from ..helpers import LIVE_HINT, format_response, parse_date, require_auth
+from ..helpers import empty_answer, format_response, parse_date, require_auth
 from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
@@ -77,12 +77,7 @@ async def health_get_exercises(
     entries = await anyio.to_thread.run_sync(_query)
 
     if not entries:
-        return format_response(
-            {
-                "message": "No exercise entries found for this period.",
-                "hint": LIVE_HINT,
-            }
-        )
+        return empty_answer("No exercise entries found for this period.", live)
 
     for entry in entries:
         entry["detail_counts"] = {
