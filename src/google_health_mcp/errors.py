@@ -36,7 +36,7 @@ class GoogleHealthError(Exception):
 
 
 class InvalidDateError(GoogleHealthError, ValueError):
-    """A date argument the tools cannot parse.
+    """A date argument the tools cannot parse, or a range they cannot answer.
 
     A `ValueError` so a caller of `parse_date` can catch it as one, which
     `test_invalid_format_raises` and `test_invalid_relative_raises` pin.

@@ -4,6 +4,8 @@ from datetime import date, timedelta
 
 import pytest
 
+from google_health_mcp import helpers
+from google_health_mcp.errors import InvalidDateError
 from google_health_mcp.helpers import format_duration, format_response, parse_date
 
 
@@ -66,10 +68,88 @@ class TestParseDate:
         with pytest.raises(ValueError, match="Invalid date"):
             parse_date("30x", None)
 
-    def test_start_after_end_allowed(self):
-        """Parser doesn't validate that start < end."""
-        start, end = parse_date("2026-03-15", "2026-01-01")
-        assert start > end
+    def test_a_start_after_the_end_is_refused_naming_both(self):
+        with pytest.raises(InvalidDateError) as caught:
+            parse_date("2026-03-02", "2026-03-01")
+        assert str(caught.value) == (
+            "Start date 2026-03-02 is after end date 2026-03-01. "
+            "Use a start on or before that date."
+        )
+
+    def test_a_start_after_a_defaulted_end_calls_it_today(self):
+        tomorrow = date.today() + timedelta(days=1)
+        with pytest.raises(InvalidDateError, match=rf"after today \({date.today()}\)"):
+            parse_date(tomorrow.isoformat())
+
+    def test_a_start_on_the_end_date_is_accepted(self):
+        assert parse_date("2026-03-01", "2026-03-01") == (date(2026, 3, 1), date(2026, 3, 1))
+
+    def test_a_missing_start_counts_back_from_a_past_end_date(self):
+        # From today it would land after the end and be refused, though the
+        # caller sent no start.
+        assert parse_date(None, "2020-01", default_days=30) == (date(2020, 1, 1), date(2020, 1, 31))
+
+    def test_a_missing_start_before_a_future_end_counts_back_from_today(self):
+        # From the end it would land after today and answer as no data.
+        end = date.today() + timedelta(days=40)
+        assert parse_date(None, end.isoformat(), default_days=30) == (
+            date.today() - timedelta(days=30),
+            end,
+        )
+
+    def test_a_default_reaching_past_year_one_stops_there(self):
+        assert parse_date(None, "0001-01-05", default_days=30) == (date(1, 1, 1), date(1, 1, 5))
+
+    def test_the_last_month_the_calendar_holds_ends_on_its_last_day(self):
+        assert parse_date("2026-01-01", "9999-12")[1] == date(9999, 12, 31)
+
+    @pytest.mark.parametrize("value", ["2026-13", "2026-00", "2026-02-30", "99999999d"])
+    @pytest.mark.parametrize("position", ["start", "end"])
+    def test_a_date_of_the_right_shape_that_does_not_exist_is_refused(self, value, position):
+        args = (value, None) if position == "start" else (None, value)
+        with pytest.raises(InvalidDateError, match="YYYY-MM-DD"):
+            parse_date(*args)
+
+    @pytest.mark.parametrize("value", ["30d\n", "2026-03\n", "2026-03-01\n"])
+    def test_a_trailing_newline_is_not_part_of_any_format(self, value):
+        with pytest.raises(InvalidDateError):
+            parse_date(value)
+
+    @pytest.mark.parametrize(
+        ("start", "end", "expected"),
+        [
+            ("0d", None, (date(2026, 3, 1), date(2026, 3, 1))),
+            ("0d", "0d", (date(2026, 3, 1), date(2026, 3, 1))),
+            (None, "2026-04-30", (date(2026, 1, 30), date(2026, 4, 30))),
+            # A day ahead, so counting from today only past the span fails it.
+            (None, "2026-03-02", (date(2026, 1, 30), date(2026, 3, 2))),
+        ],
+    )
+    def test_today_is_read_once(self, monkeypatch, start, end, expected):
+        # Two reads either side of midnight would put `0d` a day after the end
+        # it defaults to, and refuse it. One day to give, so a second read
+        # anywhere on these paths raises.
+        days = iter([date(2026, 3, 1)])
+
+        class _OneToday(date):
+            @classmethod
+            def today(cls):
+                return next(days)
+
+        monkeypatch.setattr(helpers, "date", _OneToday)
+        assert parse_date(start, end, default_days=30) == expected
+
+    def test_a_refusal_names_the_today_it_read(self, monkeypatch):
+        days = iter([date(2026, 3, 1)])
+
+        class _OneToday(date):
+            @classmethod
+            def today(cls):
+                return next(days)
+
+        monkeypatch.setattr(helpers, "date", _OneToday)
+        with pytest.raises(InvalidDateError, match=r"after today \(2026-03-01\)"):
+            parse_date("2026-03-02")
 
 
 class TestFormatDuration:

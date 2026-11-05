@@ -23,8 +23,10 @@ async def health_get_weight(
     Weight data is sparse: only days with weigh-in entries are present.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
     Returns one entry per day with weight_kg, bmi, fat_pct. Every individual
@@ -67,8 +69,10 @@ async def health_get_weight_readings(
     and the device or app that recorded it.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
     Returns weight_readings and body_fat_readings, each entry with reading_id,
@@ -116,11 +120,13 @@ async def health_get_height(
     """Get height readings, in millimetres as Google reports them.
 
     Height is usually logged once, often years back, so the default window is
-    the last ten years. Returns data from the local cache by default.
+    ten years. Returns data from the local cache by default.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "Nd". Default: ten years back.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "Nd". Default: ten
+            years back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch height from the API before reading the cache.
 
     Returns one entry per reading with datetime, date, height_mm and provider.

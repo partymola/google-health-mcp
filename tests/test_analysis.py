@@ -1,17 +1,20 @@
 """Tests for the trend analysis logic."""
 
 import inspect
+import json
 import re
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
 from google_health_mcp import db
+from google_health_mcp.errors import InvalidDateError
 from google_health_mcp.tools.analysis_tools import (
     _COMPARE_QUERY_FNS,
     _TREND_FNS,
     _avg,
     _compare_periods,
+    _compare_ranges,
     _get_period_key,
     _parse_compare_range,
     _trend_activity,
@@ -427,63 +430,121 @@ class TestTheTwoCardioFitnessDefinitions:
         assert "message" in _trend_cardio_fitness(tmp_db, "2026-01-01", "2026-01-31", "monthly")
 
 
+TODAY = date(2026, 3, 20)
+
+
 class TestParseCompareRange:
     def test_last_nd(self):
-        result = _parse_compare_range("last_30d")
-        assert result is not None
-        start, end = result
-        assert end == date.today()
-        assert (end - start).days == 29
+        assert _parse_compare_range("last_30d", TODAY) == (date(2026, 2, 19), TODAY)
 
     def test_previous_nd(self):
-        result = _parse_compare_range("previous_30d")
-        assert result is not None
-        start, end = result
-        assert (end - start).days == 29
+        assert _parse_compare_range("previous_30d", TODAY) == (date(2026, 1, 20), date(2026, 2, 18))
 
     def test_last_and_previous_nd_are_adjacent_non_overlapping(self):
-        last = _parse_compare_range("last_14d")
-        prev = _parse_compare_range("previous_14d")
+        last = _parse_compare_range("last_14d", TODAY)
+        prev = _parse_compare_range("previous_14d", TODAY)
         assert last is not None and prev is not None
         assert (last[1] - last[0]).days == 13
         assert (prev[1] - prev[0]).days == 13
         assert (last[0] - prev[1]).days == 1
 
     def test_month(self):
-        result = _parse_compare_range("2026-03")
-        assert result is not None
-        start, end = result
-        assert start == date(2026, 3, 1)
-        assert end == date(2026, 3, 31)
+        assert _parse_compare_range("2026-03", TODAY) == (date(2026, 3, 1), date(2026, 3, 31))
 
     def test_quarter(self):
-        result = _parse_compare_range("2026-Q1")
-        assert result is not None
-        start, end = result
-        assert start == date(2026, 1, 1)
-        assert end == date(2026, 3, 31)
+        assert _parse_compare_range("2026-Q1", TODAY) == (date(2026, 1, 1), date(2026, 3, 31))
 
     def test_quarter_q4(self):
-        result = _parse_compare_range("2026-Q4")
-        start, end = result
-        assert start == date(2026, 10, 1)
-        assert end == date(2026, 12, 31)
+        assert _parse_compare_range("2026-Q4", TODAY) == (date(2026, 10, 1), date(2026, 12, 31))
 
     def test_invalid(self):
-        assert _parse_compare_range("garbage") is None
-        assert _parse_compare_range("2026") is None
+        assert _parse_compare_range("garbage", TODAY) is None
+        assert _parse_compare_range("2026", TODAY) is None
+
+    def test_each_form_covers_its_whole_span(self):
+        day = timedelta(days=1)
+        assert _parse_compare_range("last_1d", TODAY) == (TODAY, TODAY)
+        assert _parse_compare_range("previous_1d", TODAY) == (TODAY - day, TODAY - day)
+        assert _parse_compare_range("2026-02", TODAY) == (date(2026, 2, 1), date(2026, 2, 28))
+        assert _parse_compare_range("2026-Q2", TODAY) == (date(2026, 4, 1), date(2026, 6, 30))
+        # Its last day is the last date `date` can hold.
+        assert _parse_compare_range("9999-12", TODAY) == (date(9999, 12, 1), date(9999, 12, 31))
+        assert _parse_compare_range("9999-Q4", TODAY) == (date(9999, 10, 1), date(9999, 12, 31))
 
 
 class TestComparePeriods:
     def test_valid_compare(self, populated_db):
-        result = _compare_periods(populated_db, "activity", "2026-03 vs 2026-02")
+        result = _compare_periods(populated_db, "activity", _compare_ranges("2026-03 vs 2026-02"))
         assert "period_1" in result
         assert "period_2" in result
         assert result["data_type"] == "activity"
 
-    def test_invalid_format(self, populated_db):
-        result = _compare_periods(populated_db, "activity", "just one period")
-        assert "error" in result
+    def test_invalid_format(self):
+        with pytest.raises(InvalidDateError, match="last_30d vs previous_30d"):
+            _compare_ranges("just one period")
+
+    @pytest.mark.parametrize(
+        ("compare", "bad"),
+        [
+            ("2026-13 vs 2026-02", "2026-13"),
+            ("2026-02 vs 2026-00", "2026-00"),
+            ("last_99999999d vs previous_30d", "last_99999999d"),
+            ("previous_99999999d vs last_30d", "previous_99999999d"),
+            ("last_0d vs previous_30d", "last_0d"),
+            ("last_30d vs previous_0d", "previous_0d"),
+            ("last_30dx vs previous_30d", "last_30dx"),
+            ("2026-02x vs 2026-03", "2026-02x"),
+            ("last_30d vs 2026-Q1x", "2026-Q1x"),
+        ],
+    )
+    def test_a_period_that_names_no_dates_is_refused_by_name(self, compare, bad):
+        # A month of 13 or a count past year 1 raises inside the arithmetic,
+        # and a zero or a trailing suffix matches a shape, so each needs its
+        # own refusal or the caller gets a masked error or a wrong span.
+        with pytest.raises(InvalidDateError) as caught:
+            _compare_ranges(compare)
+        assert str(caught.value) == (
+            f"Cannot parse period '{bad}'. Use: last_30d, previous_30d, 2026-03, or 2026-Q1"
+        )
+
+    def test_today_is_read_once(self, monkeypatch):
+        """Read per period, `last_30d vs previous_30d` across midnight shares a day."""
+        days = iter([TODAY])
+
+        class _OneToday(date):
+            @classmethod
+            def today(cls):
+                return next(days)
+
+        monkeypatch.setattr("google_health_mcp.tools.analysis_tools.date", _OneToday)
+        assert _compare_ranges("last_30d vs previous_30d") == [
+            (date(2026, 2, 19), TODAY),
+            (date(2026, 1, 20), date(2026, 2, 18)),
+        ]
+
+    def test_today_is_the_real_one(self):
+        assert _compare_ranges("last_1d vs previous_1d")[0] == (date.today(), date.today())
+
+    async def test_the_dates_beside_a_compare_are_ignored(self, monkeypatch):
+        """As the docstring says. A model often sends both, and parsing the
+        dates anyway would refuse a compare that names its own periods."""
+        from unittest.mock import patch
+
+        from google_health_mcp.tools import analysis_tools
+
+        monkeypatch.setattr(analysis_tools, "auto_sync_if_stale", lambda *a, **k: None)
+        with (
+            patch("google_health_mcp.helpers.GOOGLE_CLIENT_PATH") as client_path,
+            patch("google_health_mcp.helpers.GOOGLE_TOKENS_PATH") as tokens_path,
+        ):
+            client_path.exists.return_value = True
+            tokens_path.exists.return_value = True
+            said = await analysis_tools.health_trends(
+                compare="2026-03 vs 2026-02", start_date="2026-13", end_date="not-a-date"
+            )
+        result = json.loads(said)
+        assert result["period_1"]["period"] == "2026-03-01 to 2026-03-31"
+        assert result["period_2"]["period"] == "2026-02-01 to 2026-02-28"
 
     def test_the_two_dispatches_offer_the_same_types(self):
         """The schema is unpacked from one of them and `compare=` is served by the other.
@@ -513,7 +574,7 @@ class TestComparePeriods:
             db.save_activity(tmp_db, {"date": day, "steps": steps})
         tmp_db.commit()
 
-        result = _compare_periods(tmp_db, "activity", "2026-03 vs 2026-02")
+        result = _compare_periods(tmp_db, "activity", _compare_ranges("2026-03 vs 2026-02"))
         assert result["period_1"]["count"] == 3
         assert result["period_1"]["avg_steps"] == 4000.0
 
@@ -523,16 +584,16 @@ class TestComparePeriods:
             assert episode not in _TREND_FNS
 
     def test_compare_heart_rate(self, populated_db):
-        result = _compare_periods(populated_db, "heart_rate", "2026-03 vs 2026-02")
+        result = _compare_periods(populated_db, "heart_rate", _compare_ranges("2026-03 vs 2026-02"))
         assert result["period_1"]["count"] > 0
         assert result["period_2"]["count"] == 0
 
     def test_compare_exercises(self, populated_db):
-        result = _compare_periods(populated_db, "exercises", "2026-03 vs 2026-02")
+        result = _compare_periods(populated_db, "exercises", _compare_ranges("2026-03 vs 2026-02"))
         assert result["period_1"]["count"] == 3
 
     def test_compare_spo2(self, populated_db):
-        result = _compare_periods(populated_db, "spo2", "2026-03 vs 2026-02")
+        result = _compare_periods(populated_db, "spo2", _compare_ranges("2026-03 vs 2026-02"))
         assert result["period_1"]["count"] == 5
 
     def test_compare_cardio_fitness_sees_a_single_value(self, populated_db):
@@ -540,27 +601,29 @@ class TestComparePeriods:
         db.save_cardio_fitness(populated_db, {"date": "2026-03-20", "vo2_max": 40.0})
         populated_db.commit()
 
-        result = _compare_periods(populated_db, "cardio_fitness", "2026-03 vs 2026-02")
+        result = _compare_periods(
+            populated_db, "cardio_fitness", _compare_ranges("2026-03 vs 2026-02")
+        )
         assert result["period_1"]["avg_vo2_max"] == 40.0
         assert result["period_1"]["avg_vo2_max_low"] == 39.0
 
     def test_compare_core_temperature(self, populated_db):
-        result = _compare_periods(populated_db, "core_temperature", "2026-03 vs 2026-02")
+        result = _compare_periods(
+            populated_db, "core_temperature", _compare_ranges("2026-03 vs 2026-02")
+        )
         assert result["period_1"]["count"] == 4
         assert result["period_1"]["max_temp_celsius"] == 38.4
         assert result["period_2"]["count"] == 0
 
 
 class TestTheTrendConnectionIsAlwaysClosed:
-    """`health_trends` opens the cache before it validates its arguments.
+    """`health_trends` closes the cache in a `finally` around the trend call.
 
-    Every other tool closes in the function that opened, with nothing between;
-    this one holds the connection across `parse_date` and the trend call, so
-    only its `finally` closes it when one of them raises. Without that, the
-    traceback keeps the frame alive and the frame keeps the connection, so it
-    is a reference cycle: reclaimed by the cyclic collector eventually rather
-    than closed at the point of failure. Measured, the descriptor count does
-    not climb.
+    Without it, a trend call that raises leaves the connection to the
+    traceback, which keeps the frame alive and the frame the connection: a
+    reference cycle, reclaimed by the cyclic collector eventually rather than
+    closed at the point of failure. Measured, the descriptor count does not
+    climb.
 
     Observed by recording `close()`, not by using the connection afterwards.
     Those two are indistinguishable from the test's thread: a connection
@@ -573,14 +636,22 @@ class TestTheTrendConnectionIsAlwaysClosed:
     or rolls back a transaction and never closes.
     """
 
-    async def test_a_bad_date_does_not_abandon_the_connection(self, monkeypatch, tmp_path):
+    async def test_a_failing_trend_does_not_abandon_the_connection(self, monkeypatch, tmp_path):
         import sqlite3
         from unittest.mock import patch
 
         from mcp.server.mcpserver.exceptions import ToolError
 
         from google_health_mcp import db as db_mod
+        from google_health_mcp.errors import GoogleHealthError
         from google_health_mcp.tools import analysis_tools
+
+        def _fails(*args, **kwargs):
+            raise GoogleHealthError("the trend could not be computed")
+
+        # A bad date is refused before the open, so the failure has to come
+        # from the trend call the connection is held across.
+        monkeypatch.setitem(analysis_tools._TREND_FNS, "activity", _fails)
 
         closed = []
 
@@ -610,7 +681,7 @@ class TestTheTrendConnectionIsAlwaysClosed:
             client_path.exists.return_value = True
             tokens_path.exists.return_value = True
             with pytest.raises(ToolError):
-                await analysis_tools.health_trends(data_type="activity", start_date="not-a-date")
+                await analysis_tools.health_trends(data_type="activity")
 
         assert opened, "no connection was opened, so this test proves nothing"
         assert closed == opened, f"{len(opened) - len(closed)} connection(s) abandoned"

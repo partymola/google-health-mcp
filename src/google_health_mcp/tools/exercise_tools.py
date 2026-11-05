@@ -29,8 +29,10 @@ async def health_get_exercises(
     to fetch from the API. Run health_sync first to populate the cache.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         exercise_type: Filter by activity name (case-insensitive substring match),
             e.g. "cycling", "walk", "run". Default: all types. A value matching
             no workout name the cache holds is refused, naming those, rather

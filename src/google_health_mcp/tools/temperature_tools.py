@@ -23,8 +23,10 @@ async def health_get_skin_temperature(
     establish before values appear. Useful as an illness/cycle/recovery signal.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
     Returns one entry per night with nightly_relative (degrees C, can be negative),
@@ -75,8 +77,10 @@ async def health_get_core_temperature(
     hold several readings (each timestamped), useful for tracking a fever over time.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
     Returns one entry per logged reading with datetime (YYYY-MM-DDThh:mm:ss),

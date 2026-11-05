@@ -24,8 +24,10 @@ async def health_get_sleep(
     Travel, off-wrist nights, or manual logs may be missing.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
     Returns one entry per night with total_minutes, efficiency, start/end times,
@@ -76,8 +78,10 @@ async def health_get_sleep_sessions(
     per-stage minutes and counts), and the device that recorded it.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
         include_stages: If true, include every stage segment, short awakening and
             out-of-bed segment. Without it each session carries only how many

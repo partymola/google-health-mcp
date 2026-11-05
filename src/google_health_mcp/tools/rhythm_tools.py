@@ -25,8 +25,10 @@ async def health_get_ecg(
     for resting rate over time use health_get_heart_rate instead.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
         include_waveform: If true, include the raw voltage samples. These are
             thousands of integers per reading - ask for them only to analyse
@@ -78,8 +80,10 @@ async def health_get_irregular_rhythm(
     deliberate reading with a trace behind it, use health_get_ecg.
 
     Args:
-        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: last 30 days.
-        end_date: End date as "YYYY-MM-DD". Default: today.
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
         live: If true, re-fetch this window from the API before reading the cache.
 
     Returns one entry per notification with start_time, end_time and

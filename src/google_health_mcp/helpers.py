@@ -1,5 +1,6 @@
 """Shared utilities for the Google Health MCP server."""
 
+import calendar
 import functools
 import json
 import re
@@ -28,8 +29,6 @@ def format_response(result: Any) -> str:
 
 # --- Date parsing with coercion ---
 
-_RELATIVE_RE = re.compile(r"^(\d+)d$")
-
 
 def parse_date(
     start_str: str | None,
@@ -42,38 +41,46 @@ def parse_date(
         "YYYY-MM-DD"  -> exact date
         "YYYY-MM"     -> first of month (start) or last of month (end)
         "30d"         -> 30 days ago from today
-        None          -> default_days ago from today (start) or today (end)
+        None          -> default_days before the end date or today, whichever is
+                         earlier (start), or today (end)
 
-    Returns (start_date, end_date) as date objects.
+    A start after the end is refused, because the empty answer reads as no data.
     """
+    # Read once, or `0d` across midnight lands after the end date it defaults to.
     today = date.today()
-    end_date = _parse_single_date(end_str, today, is_end=True)
-    start_date = _parse_single_date(start_str, today - timedelta(days=default_days), is_end=False)
+    end_date = _parse_single_date(end_str, today, today, is_end=True)
+    # By ordinal, because the date arithmetic raises past year 1. From today
+    # when the end is later: counted from the end, the span would move forward
+    # with it, past today altogether once the end is more than the span ahead.
+    default_start = date.fromordinal(max(min(end_date, today).toordinal() - default_days, 1))
+    start_date = _parse_single_date(start_str, default_start, today, is_end=False)
+    if start_date > end_date:
+        end_name = f"end date {end_date}" if end_str is not None else f"today ({end_date})"
+        raise InvalidDateError(
+            f"Start date {start_date} is after {end_name}. Use a start on or before that date."
+        )
     return start_date, end_date
 
 
-def _parse_single_date(date_str: str | None, default: date, is_end: bool) -> date:
-    """Parse a single date string."""
+def _parse_single_date(date_str: str | None, default: date, today: date, is_end: bool) -> date:
     if date_str is None:
         return default
 
-    # Relative: "30d", "7d", etc.
-    m = _RELATIVE_RE.match(date_str)
-    if m:
-        return date.today() - timedelta(days=int(m.group(1)))
+    # The patterns match the shape and the stdlib rejects the value: a month of
+    # 13, a 30th of February or a count of days past year 1 raises a bare
+    # ValueError or OverflowError, which reaches the caller masked.
+    try:
+        if m := re.fullmatch(r"(\d+)d", date_str):
+            return today - timedelta(days=int(m.group(1)))
 
-    # Month: "2026-04"
-    if re.match(r"^\d{4}-\d{2}$", date_str):
-        year, month = int(date_str[:4]), int(date_str[5:7])
-        if is_end:
-            if month == 12:
-                return date(year + 1, 1, 1) - timedelta(days=1)
-            return date(year, month + 1, 1) - timedelta(days=1)
-        return date(year, month, 1)
+        if re.fullmatch(r"\d{4}-\d{2}", date_str):
+            year, month = int(date_str[:4]), int(date_str[5:7])
+            return date(year, month, calendar.monthrange(year, month)[1] if is_end else 1)
 
-    # Full date: "2026-04-15"
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
-        return date.fromisoformat(date_str)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+            return date.fromisoformat(date_str)
+    except (ValueError, OverflowError):
+        pass
 
     raise InvalidDateError(
         f"Invalid date '{date_str}'. Use YYYY-MM-DD, YYYY-MM, or Nd (e.g. '30d')."

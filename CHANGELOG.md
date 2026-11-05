@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- A date range whose start is after its end is refused, naming both dates. It got an empty answer, which reads as no data. An end date given without a start does not reach that refusal: the start now counts back from the end date or today, whichever is earlier, so `end_date="2020-01"` alone covers the tool's default span before the end of January 2020, where it got an empty answer.
+- A date of the right shape that does not exist, such as `2026-13` or `2026-02-30`, or a count of days reaching past year 1, is refused with the accepted formats. It ended in "Error executing tool" with no reason given, and so did a full date followed by a newline and an end date of `9999-12`, which is now read as the last day of 9999. A month or a day count followed by a newline was read as if the newline were not there, and is refused too.
+- `health_trends` checks its dates before syncing, as the other tools do.
+- `health_trends`' `compare` refuses a period that names no dates, saying which one, before it syncs. A month of 13 or a count of days reaching past year 1 ended in "Error executing tool". `last_0d` was answered over a range ending before it started, and a period with trailing characters, such as `last_30dx`, was read as if they were not there. Both periods now count from the same day, where a compare running across midnight could give them a day in common or leave a day between them.
+
+### Changed
+
+- A `compare` that cannot be parsed is refused as an error, like any other bad date, rather than returned as an `error` field inside a normal reply.
+
 ### Packaging
 
 - The container image is built on Python 3.15 instead of 3.14. Python 3.15 joins the CI matrix and the supported-version classifiers. `requires-python` is unchanged at `>=3.13`.

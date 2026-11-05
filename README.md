@@ -189,9 +189,11 @@ Query tools sync on the first query of each day per data type, then read the cac
 
 All query tools except `health_get_devices`, `health_get_lifetime_stats`, `health_get_profile` and `health_get_exercise_route` accept:
 
-- `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: last 30 days, except `health_get_height`, whose default is the last ten years.
-- `end_date` - `YYYY-MM-DD`. Default: today.
+- `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: 30 days back from the end date or today, whichever is earlier, except `health_get_height`, which goes back ten years.
+- `end_date` - `YYYY-MM-DD`, `YYYY-MM` (its last day), or `30d`. Default: today.
 - `live` - if true, re-fetch this window from the API before reading the cache. A failed refresh is reported rather than silently answered from the cache.
+
+A start after the end, or a date of the right shape that does not exist, such as `2026-13`, is refused with a message rather than answered as a period with no data.
 
 `health_get_profile` takes only `live`.
 
@@ -213,8 +215,8 @@ All query tools except `health_get_devices`, `health_get_lifetime_stats`, `healt
 
 - `data_type` - any cached type with a daily series; ECG readings and rhythm alerts are episodes, and sleep sessions and individual readings are records, so they have no trend. Default: `activity`.
 - `period` - `weekly`, `monthly`, `quarterly`. Default: `monthly`.
-- `start_date` / `end_date` - default: the last 12 months.
-- `compare` - two periods, e.g. `last_30d vs previous_30d`, `2026-03 vs 2026-02`, `2026-Q1 vs 2025-Q4`. When set, `period`, `start_date` and `end_date` are ignored.
+- `start_date` / `end_date` - default: 365 days back from the end date or today, whichever is earlier.
+- `compare` - two periods, e.g. `last_30d vs previous_30d`, `2026-03 vs 2026-02`, `2026-Q1 vs 2025-Q4`. When set, `period`, `start_date` and `end_date` are ignored. A period that names no dates, such as `2026-13` or `last_0d`, is refused.
 
 ## OAuth scopes
 
