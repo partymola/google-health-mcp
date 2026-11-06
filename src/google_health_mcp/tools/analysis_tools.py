@@ -610,7 +610,7 @@ def _compare_periods(conn, data_type: TrendType, ranges: list[tuple[date, date]]
     return {"period_1": result_a, "period_2": result_b, "data_type": data_type}
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_trends(
     data_type: TrendType = "activity",

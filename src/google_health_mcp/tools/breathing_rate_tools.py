@@ -8,7 +8,7 @@ from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_breathing_rate(
     start_date: str | None = None,

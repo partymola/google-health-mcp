@@ -8,7 +8,7 @@ from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_ecg(
     start_date: str | None = None,
@@ -62,7 +62,7 @@ async def health_get_ecg(
     return format_response({"ecg": rows, "count": len(rows)})
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_irregular_rhythm(
     start_date: str | None = None,

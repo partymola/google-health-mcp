@@ -8,7 +8,7 @@ from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_skin_temperature(
     start_date: str | None = None,
@@ -59,7 +59,7 @@ async def health_get_skin_temperature(
     return format_response({"skin_temperature": entries, "count": len(entries)})
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_core_temperature(
     start_date: str | None = None,

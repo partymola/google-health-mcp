@@ -47,7 +47,7 @@ def lifetime_from_cache(conn) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_lifetime_stats() -> str:
     """Get all-time activity totals and personal best records.

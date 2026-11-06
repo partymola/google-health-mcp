@@ -8,7 +8,7 @@ from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_sleep(
     start_date: str | None = None,
@@ -56,7 +56,7 @@ async def health_get_sleep(
 _SEGMENT_ARRAYS = ("stages", "shortAwakenings", "outOfBedSegments")
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_sleep_sessions(
     start_date: str | None = None,

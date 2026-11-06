@@ -14,7 +14,7 @@ from .sync_tools import refresh_before_query
 _DETAIL_ARRAYS = ("exercise_events", "splits", "split_summaries")
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_exercises(
     start_date: str | None = None,
@@ -91,7 +91,7 @@ async def health_get_exercises(
     return format_response({"exercises": entries, "count": len(entries)})
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_exercise_route(log_id: str, include_tcx: bool = False) -> str:
     """Get the GPS route of one exercise, as the TCX file Google exports.

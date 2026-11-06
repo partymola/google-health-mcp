@@ -10,7 +10,7 @@ from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_profile(live: bool = False) -> str:
     """Get the account's profile, settings and irregular-rhythm enrolment.

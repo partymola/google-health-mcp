@@ -8,7 +8,7 @@ from ..mcp_instance import mcp
 from .sync_tools import refresh_before_query
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_weight(
     start_date: str | None = None,
@@ -51,7 +51,7 @@ async def health_get_weight(
     return format_response({"weight": entries, "count": len(entries)})
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_weight_readings(
     start_date: str | None = None,
@@ -101,7 +101,7 @@ async def health_get_weight_readings(
     )
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_height(
     start_date: str | None = None,

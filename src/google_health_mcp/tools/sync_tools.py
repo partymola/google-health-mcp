@@ -283,7 +283,7 @@ def refresh_before_query(data_type: str, start: date, end: date, live: bool) -> 
         raise LiveRefreshFailed(f"live refresh of {data_type} failed: {status or 'no result'}")
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_sync(
     data_types: str = "all",

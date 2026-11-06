@@ -28,7 +28,7 @@ def _fetch_devices() -> list[dict]:
     return devices
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 @require_auth
 async def health_get_devices() -> str:
     """List paired devices with battery level and last sync time.
