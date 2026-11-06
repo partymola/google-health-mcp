@@ -332,9 +332,14 @@ def get_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     path = Path(db_path) if db_path is not None else DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-    _migrate(conn)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.executescript(SCHEMA)
+        _migrate(conn)
+    except BaseException:
+        # The caller never receives the connection, so nothing else can close it.
+        conn.close()
+        raise
     return conn
 
 

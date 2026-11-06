@@ -1,7 +1,8 @@
-"""Every query tool closes its cache connection when the read fails.
+"""Every query tool, and get_db itself, closes its cache connection on a failure.
 
 A connection closed only after the read returns stays open, when the read
 raises, until the traceback is freed, rather than closing where it failed.
+get_db hands its caller nothing to close when the schema cannot be applied.
 """
 
 import sqlite3
@@ -98,5 +99,47 @@ async def test_a_failing_cache_read_closes_its_connection(module, name, query):
         client.exists.return_value = True
         tokens.exists.return_value = True
         await getattr(module, name)()
+    assert opened, "no connection was opened, so this proves nothing"
+    assert closed == opened
+
+
+def _fail_migration(conn):
+    raise sqlite3.OperationalError("attempt to write a readonly database")
+
+
+def _interrupt_migration(conn):
+    raise KeyboardInterrupt
+
+
+@pytest.mark.parametrize(
+    ("breakage", "raised"),
+    [
+        (("SCHEMA", "THIS IS NOT SQL;"), sqlite3.Error),
+        (("_migrate", _fail_migration), sqlite3.Error),
+        (("_migrate", _interrupt_migration), KeyboardInterrupt),
+    ],
+    ids=["schema", "migration", "interrupt"],
+)
+def test_get_db_closes_the_connection_when_the_schema_cannot_be_applied(
+    breakage, raised, tmp_path, monkeypatch
+):
+    """The caller never receives the connection, so nothing else could close it."""
+    opened, closed = [], []
+    real_connect = sqlite3.connect
+
+    class _Recording(sqlite3.Connection):
+        def close(self):
+            closed.append(self)
+            super().close()
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, factory=_Recording, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(db.sqlite3, "connect", connect)
+    monkeypatch.setattr(db, *breakage)
+    with pytest.raises(raised):
+        db.get_db(tmp_path / "cache.db")
     assert opened, "no connection was opened, so this proves nothing"
     assert closed == opened

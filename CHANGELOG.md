@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - In offline mode an empty answer keeps the tool's own note, such as "Requires sleep tracking.", and replaces only the re-fetch hint with the offline one. It replaced the whole hint, note included.
+- Opening the cache closes the connection when the schema or a migration cannot be applied, for example on a read-only copy of an older cache. It was left open until the error was cleaned up.
 
 ## 1.11.1 - 2026-11-06
 
