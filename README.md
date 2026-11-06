@@ -124,7 +124,7 @@ Offline and read-only: it reports which paths resolved where, whether the creden
 
 ```json
 {
-  "version": "1.11.1",
+  "version": "1.12.0",
   "findings": [
     {
       "check": "stopped-series",
