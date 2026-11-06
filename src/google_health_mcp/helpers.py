@@ -106,9 +106,11 @@ def format_duration(minutes: int | float | None) -> str:
 
 # An empty answer from the cache carries LIVE_HINT, after the tool's own note
 # if it has one (see empty_answer). In offline mode live=True is unavailable,
-# so any hint naming it is rewritten on the way out (see _annotate_offline). A
-# raised refusal never passes through that, so it asks for the hint instead
-# (errors.wants_live_hint) and this is the one place that chooses the wording.
+# so LIVE_HINT is swapped for _OFFLINE_HINT on the way out, keeping the note,
+# and a hint still naming live=True after that is replaced whole (see
+# _annotate_offline). A raised refusal never passes through that, so it asks
+# for the hint instead (errors.wants_live_hint) and this is the one place that
+# chooses the wording.
 _OFFLINE_HINT = (
     "Offline mode is on (GOOGLE_HEALTH_MCP_OFFLINE); the host that owns the cache must "
     "sync this period. Live fetch is disabled here."
@@ -146,7 +148,11 @@ def _annotate_offline(result: str) -> str:
     parsed["offline_mode"] = True
     hint = parsed.get("hint")
     if isinstance(hint, str) and "live=True" in hint:
-        parsed["hint"] = _OFFLINE_HINT
+        # A tool's note still holds on a reader host, so only LIVE_HINT is
+        # swapped. Any other mention of live=True left behind takes the whole
+        # hint with it, since a reader host cannot follow it.
+        swapped = hint.replace(LIVE_HINT, _OFFLINE_HINT)
+        parsed["hint"] = _OFFLINE_HINT if "live=True" in swapped else swapped
     return json.dumps(parsed, default=str)
 
 

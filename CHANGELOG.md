@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- In offline mode an empty answer keeps the tool's own note, such as "Requires sleep tracking.", and replaces only the re-fetch hint with the offline one. It replaced the whole hint, note included.
+
 ## 1.11.1 - 2026-11-06
 
 ### Fixed

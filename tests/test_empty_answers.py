@@ -134,6 +134,29 @@ async def test_an_empty_cache_answer_offers_a_live_call(module, name, message, n
     assert said == {"message": message, "hint": hint}
 
 
+@pytest.mark.parametrize(("module", "name", "message", "note"), _TOOLS, ids=_IDS)
+async def test_an_empty_answer_offline_keeps_the_note_and_drops_the_live_call(
+    module, name, message, note, monkeypatch
+):
+    """A reader host cannot fetch, so only the re-fetch half of the hint changes."""
+    monkeypatch.setattr(helpers.config, "OFFLINE_MODE", True)
+    said = await _empty_answer(module, name, live=False)
+    offline = helpers._OFFLINE_HINT
+    hint = f"{note} {offline}" if note else offline
+    assert said == {"message": message, "hint": hint, "offline_mode": True}
+
+
+@pytest.mark.parametrize(
+    "hint",
+    ["Try live=True.", f"Pass live=True for the newest day. {helpers.LIVE_HINT}"],
+    ids=["other-wording", "other-wording-beside-live-hint"],
+)
+def test_an_offline_hint_naming_live_in_other_words_is_replaced_whole(hint):
+    """No tool writes one today; a future one must still not send a reader host live."""
+    said = json.loads(helpers._annotate_offline(json.dumps({"hint": hint})))
+    assert said == {"hint": helpers._OFFLINE_HINT, "offline_mode": True}
+
+
 @pytest.mark.parametrize(
     ("live", "note", "expected"),
     [

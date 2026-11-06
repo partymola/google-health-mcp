@@ -557,9 +557,9 @@ class TestOfflineMode:
     async def test_a_live_hint_behind_a_note_is_rewritten_offline(
         self, mock_tokens_path, mock_config_path, monkeypatch, tmp_path
     ):
-        # cardio_fitness puts its own note before the live hint, and
-        # _annotate_offline matches "live=True" anywhere in the hint, so a
-        # cache-only host is still never told to go live.
+        # Through the real tool rather than the helper: cardio_fitness puts its
+        # own note before the live hint, and a cache-only host is still never
+        # told to go live.
         mock_config_path.exists.return_value = False
         mock_tokens_path.exists.return_value = False
         monkeypatch.setattr("google_health_mcp.config.OFFLINE_MODE", True)
