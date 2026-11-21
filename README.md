@@ -224,8 +224,8 @@ Tick these read-only scopes on the Data Access page. All are under `https://www.
 
 | Scope | Data accessed |
 |-------|--------------|
-| `activity_and_fitness.readonly` | Steps, distance, floors, calories, workouts, active zone minutes |
-| `health_metrics_and_measurements.readonly` | Heart rate, HRV, SpO2, breathing rate, weight, body fat, height, temperature, VO2 max |
+| `activity_and_fitness.readonly` | Steps, distance, floors, calories, workouts, active zone minutes, VO2 max |
+| `health_metrics_and_measurements.readonly` | Heart rate, HRV, SpO2, breathing rate, weight, body fat, height, temperature |
 | `sleep.readonly` | Sleep sessions and stages |
 | `nutrition.readonly` | Food and water logs |
 | `ecg.readonly` | Electrocardiograms |

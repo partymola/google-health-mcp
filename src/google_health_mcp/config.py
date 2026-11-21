@@ -42,10 +42,9 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 # nothing, and `test_no_scope_is_asked_for_that_nothing_reads` holds this map
 # equal to what the package actually fetches, in both directions.
 #
-# Google publishes a category per scope and no per-type mapping, so the
-# placement here is inferred from those categories, and a wrong one answers
-# 403. The scope lists in the developer docs and in the discovery document are
-# both incomplete; check the Cloud console.
+# Each data type sits under the scope developers.google.com/health/data-types
+# lists for it; a wrong placement answers 403. The discovery document's scope
+# list is incomplete; check the Cloud console for which scopes exist.
 GOOGLE_SCOPE_READERS: dict[str, tuple[str, ...]] = {
     "activity_and_fitness": (
         "steps",
@@ -54,6 +53,7 @@ GOOGLE_SCOPE_READERS: dict[str, tuple[str, ...]] = {
         "total-calories",
         "active-zone-minutes",
         "exercise",
+        "daily-vo2-max",
     ),
     "health_metrics_and_measurements": (
         "daily-resting-heart-rate",
@@ -61,7 +61,6 @@ GOOGLE_SCOPE_READERS: dict[str, tuple[str, ...]] = {
         "daily-oxygen-saturation",
         "daily-respiratory-rate",
         "daily-sleep-temperature-derivations",
-        "daily-vo2-max",
         "weight",
         "body-fat",
         "core-body-temperature",

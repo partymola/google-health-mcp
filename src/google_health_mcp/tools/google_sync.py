@@ -1068,7 +1068,7 @@ HANDLER_SCOPES = {
     "exercises": _ACTIVITY,
     "ecg": ("ecg",),
     "irn": ("irn",),
-    "cardio_fitness": _METRICS,
+    "cardio_fitness": _ACTIVITY,
     "food_log": ("nutrition",),
     "account": (),
     "height": _METRICS,
