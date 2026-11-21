@@ -381,6 +381,110 @@ class TestWhatTheDailyPointsAlsoCarry:
         assert row["calculation_method"] is None
         assert row["data_source"] is None
 
+    @pytest.mark.parametrize(
+        "handler,field,first,revised,table,column",
+        [
+            (
+                google_sync.sync_hrv,
+                "dailyHeartRateVariability",
+                {"averageHeartRateVariabilityMilliseconds": 28.4, "entropy": 2.25},
+                {"averageHeartRateVariabilityMilliseconds": 29.0},
+                "hrv",
+                "entropy",
+            ),
+            (
+                google_sync.sync_hrv,
+                "dailyHeartRateVariability",
+                {
+                    "averageHeartRateVariabilityMilliseconds": 28.4,
+                    "nonRemHeartRateBeatsPerMinute": "57",
+                },
+                {"averageHeartRateVariabilityMilliseconds": 29.0},
+                "hrv",
+                "non_rem_hr",
+            ),
+            (
+                google_sync.sync_spo2,
+                "dailyOxygenSaturation",
+                {"averagePercentage": 95.7, "lowerBoundPercentage": 92.8},
+                {"averagePercentage": 96.0},
+                "spo2",
+                "avg_ci_low",
+            ),
+            (
+                google_sync.sync_spo2,
+                "dailyOxygenSaturation",
+                {"averagePercentage": 95.7, "upperBoundPercentage": 98.2},
+                {"averagePercentage": 96.0},
+                "spo2",
+                "avg_ci_high",
+            ),
+            (
+                google_sync.sync_spo2,
+                "dailyOxygenSaturation",
+                {"averagePercentage": 95.7, "standardDeviationPercentage": 1.25},
+                {"averagePercentage": 96.0},
+                "spo2",
+                "std_dev",
+            ),
+            (
+                google_sync.sync_skin_temperature,
+                "dailySleepTemperatureDerivations",
+                {"nightlyTemperatureCelsius": 33.5, "baselineTemperatureCelsius": 33.4},
+                {"nightlyTemperatureCelsius": 33.6},
+                "skin_temperature",
+                "baseline",
+            ),
+            (
+                google_sync.sync_skin_temperature,
+                "dailySleepTemperatureDerivations",
+                {"nightlyTemperatureCelsius": 33.5, "relativeNightlyStddev30dCelsius": 0.25},
+                {"nightlyTemperatureCelsius": 33.6},
+                "skin_temperature",
+                "nightly_stddev_30d",
+            ),
+            (
+                google_sync.sync_skin_temperature,
+                "dailySleepTemperatureDerivations",
+                {"nightlyTemperatureCelsius": 33.5, "baselineTemperatureCelsius": 33.4},
+                {"baselineTemperatureCelsius": 33.4},
+                "skin_temperature",
+                "nightly_absolute",
+            ),
+        ],
+    )
+    def test_a_revised_point_withdraws_what_only_google_writes(
+        self, tmp_db, stored, handler, field, first, revised, table, column
+    ):
+        """No import writes these, so one left from an earlier point would sit
+        beside a revised value it was never reported with."""
+        stored(handler, _points(field, first))
+        stored(handler, _points(field, revised))
+        (row,) = getattr(db, f"query_{table}")(tmp_db, "2026-03-15", "2026-03-15")
+        assert row[column] is None
+
+    def test_an_imported_skin_temperature_delta_survives_a_point_with_no_baseline(
+        self, tmp_db, stored
+    ):
+        """The delta is what an imported history holds, so it is not Google's
+        alone and a point that cannot compute one leaves it."""
+        db.save_skin_temperature(tmp_db, {"date": "2026-03-15", "nightly_relative": 0.9})
+        tmp_db.commit()
+        stored(
+            google_sync.sync_skin_temperature,
+            _points("dailySleepTemperatureDerivations", {"nightlyTemperatureCelsius": 33.6}),
+        )
+        (row,) = db.query_skin_temperature(tmp_db, "2026-03-15", "2026-03-15")
+        assert row["nightly_relative"] == 0.9
+        assert row["nightly_absolute"] == 33.6
+
+    def test_an_imported_spo2_pair_survives_a_point_without_bounds(self, tmp_db, stored):
+        db.save_spo2(tmp_db, {"date": "2026-03-15", "avg": 96.0, "min": 91.0, "max": 99.0})
+        tmp_db.commit()
+        stored(google_sync.sync_spo2, _points("dailyOxygenSaturation", {"averagePercentage": 95.7}))
+        (row,) = db.query_spo2(tmp_db, "2026-03-15", "2026-03-15")
+        assert (row["min"], row["max"]) == (91.0, 99.0)
+
     def test_metadata_that_is_not_an_object_is_absent_rather_than_fatal(self, tmp_db, stored):
         stored(
             google_sync.sync_heart_rate,

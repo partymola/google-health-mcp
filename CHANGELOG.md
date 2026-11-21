@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - VO2 max is read under the activity and fitness permission, which is where Google now lists it.
+- When Google revises a day's HRV, SpO2 or skin temperature, the figures it sends only alongside them (HRV entropy and non-REM rate, the SpO2 bounds and spread, the skin temperature readings, baseline and spread) now follow the revision. A figure the revised day no longer carries is cleared rather than left beside it. Imported history is untouched.
 
 ## 1.12.0 - 2026-11-06
 

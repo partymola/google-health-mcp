@@ -86,13 +86,17 @@ def _window(start, end):
     return start, end + timedelta(days=1)
 
 
-def _daily_rows(data_type: str, start, end, field: str, build, qualifiers=frozenset()):
+def _daily_rows(
+    data_type: str, start, end, field: str, build, qualifiers=frozenset(), google_only=frozenset()
+):
     """Every daily point in the window, as (date, row) pairs ready to store.
 
     `build` returns the columns for one point, or None to skip it. A point
     with no date of its own is skipped rather than guessed at. `qualifiers`
     name columns that describe a measurement (how it was calculated, how sure
     it is): stored beside one, they never make a row on their own.
+    `google_only` name measurements no import writes, which a point lacking
+    them withdraws.
     """
     for point in api.list_google_data_points(data_type, *_window(start, end)):
         payload = point.get(field)
@@ -113,9 +117,10 @@ def _daily_rows(data_type: str, start, end, field: str, build, qualifiers=frozen
         if not set(measured) - qualifiers:
             continue
         # Named even when absent, and only once a measurement is found: a
-        # qualifier or source describes this point's measurement, so one left
-        # from an earlier point would sit beside a value it does not describe.
-        for name in qualifiers:
+        # qualifier, a source or a value only Google writes belongs to this
+        # point, so one left from an earlier point would sit beside a value it
+        # was not reported with.
+        for name in qualifiers | google_only:
             measured.setdefault(name, None)
         measured["data_source"] = _source(point)
         yield {"date": day, "provider": PROVIDER, **measured}
@@ -174,6 +179,7 @@ def sync_spo2(conn, start, end) -> int:
             "avg_ci_high": _number(p.get("upperBoundPercentage"), float),
             "std_dev": _number(p.get("standardDeviationPercentage"), float),
         },
+        google_only=frozenset({"avg_ci_low", "avg_ci_high", "std_dev"}),
     ):
         db.save_spo2(conn, row)
         count += 1
@@ -196,6 +202,7 @@ def sync_hrv(conn, start, end) -> int:
             "entropy": _number(p.get("entropy"), float),
             "non_rem_hr": _number(p.get("nonRemHeartRateBeatsPerMinute"), int),
         },
+        google_only=frozenset({"entropy", "non_rem_hr"}),
     ):
         db.save_hrv(conn, row)
         count += 1
@@ -225,7 +232,8 @@ def sync_skin_temperature(conn, start, end) -> int:
     quantity an imported row holds; Google reports the two absolutes instead,
     so one subtraction keeps the column meaning one thing. Both absolutes are
     stored beside it because they are strictly more information. Without a
-    baseline there is no delta - and no delta is not a drift of zero.
+    baseline there is no delta - and no delta is not a drift of zero. The
+    delta is left out of `google_only`, since an imported history holds it.
     """
 
     def build(payload):
@@ -243,7 +251,12 @@ def sync_skin_temperature(conn, start, end) -> int:
 
     count = 0
     for row in _daily_rows(
-        "daily-sleep-temperature-derivations", start, end, "dailySleepTemperatureDerivations", build
+        "daily-sleep-temperature-derivations",
+        start,
+        end,
+        "dailySleepTemperatureDerivations",
+        build,
+        google_only=frozenset({"nightly_absolute", "baseline", "nightly_stddev_30d"}),
     ):
         db.save_skin_temperature(conn, row)
         count += 1
