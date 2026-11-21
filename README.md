@@ -94,7 +94,7 @@ cp ~/Downloads/client_secret_*.json ~/.config/google-health-mcp/google_client.js
 google-health-mcp auth
 ```
 
-Your browser will warn that **Google hasn't verified this app**. That is expected, and the app is your own: these health scopes are classified restricted, and verification only matters above 100 users. Click **Advanced**, then **Go to google-health-mcp (unsafe)**, and grant the scopes.
+Your browser will warn that **Google hasn't verified this app**. That is expected, and the app is your own: most of these health scopes are classified restricted, and verification only matters above 100 users. Click **Advanced**, then **Go to google-health-mcp (unsafe)**, and grant the scopes.
 
 If you have more than one Google account, pick the one your health data is in. `auth` checks the account once the tokens are saved, and if Google reports it is not linked to Google Health, it says so and exits 1; run it again and choose the other account.
 
@@ -267,7 +267,25 @@ Querying from the cache - the default - costs no quota at all.
 
 ## Data safety
 
-Your health data stays on your machine: this server has no backend, sends nothing anywhere, and talks only to Google's API with your own credentials.
+This server keeps your health data on your machine. It has no backend, sends nothing anywhere, and talks only to Google's API with your own credentials.
+
+What happens to a tool's reply is up to your MCP client. With a hosted model, Claude Code included, the data a tool returns goes to that model's provider. To keep everything on your machine, use a local model.
+
+The token file and the cache are not encrypted by this server. Keep them on an encrypted disk, such as one using LUKS, FileVault or BitLocker.
+
+This server is not a medical device. Do not rely on it, or on a model reading from it, for a diagnosis or a treatment decision.
+
+The use of information received from Google Health API will adhere to the [Google Health API Developer and User Data Policy](https://developers.google.com/health/policies/health-api-developer-user-data-policy), including the Limited Use requirements.
+
+### Removing your data
+
+- Delete the cache: `~/.local/share/google-health-mcp/google_health.db`, or the file `GOOGLE_HEALTH_MCP_DB_PATH` names.
+- Delete the tokens: `~/.config/google-health-mcp/google_tokens.json`.
+- Remove the app's access to your Google account at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+Removing access does not delete the cache, and deleting the cache does not remove access.
+
+### Contributing safely
 
 The repository ships a pre-commit hook that refuses to commit database files, anything under `config/`, and large files; [CONTRIBUTING.md](https://github.com/partymola/google-health-mcp/blob/main/CONTRIBUTING.md) says how to install it.
 
