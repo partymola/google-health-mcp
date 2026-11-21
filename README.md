@@ -43,7 +43,7 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 | `health_get_skin_temperature` | Nightly variation from your baseline, and the absolutes behind it |
 | `health_get_core_temperature` | Body temperature readings you logged by hand |
 | `health_get_cardio_fitness` | VO2 max, where the device reports it |
-| `health_get_food_log` | Food calories and water, where logged |
+| `health_get_food_log` | Food calories and water, where logged, and each food and drink on request |
 | `health_get_ecg` | Electrocardiograms: classification, average rate, duration, waveform on request |
 | `health_get_irregular_rhythm` | Irregular-rhythm notifications and the windows that triggered them |
 | `health_get_devices` | Paired devices, battery level, last sync |
@@ -178,7 +178,8 @@ google-health-mcp sync           Sync data to the local cache
                         core_temperature, cardio_fitness, food_log, ecg, irn,
                         account, height, exercise_routes, sleep_sessions,
                         weight_readings, body_fat_readings, sedentary_periods,
-                        altitude_gains, swim_lengths, respiratory_rate_sleep
+                        altitude_gains, swim_lengths, respiratory_rate_sleep,
+                        food_entries, water_entries
   --since YYYY-MM-DD    Fetch from this date, ignoring the incremental cursor
   --until YYYY-MM-DD    Inclusive end date for a --since window; together they
                         re-fetch exactly that window, to repair a gap in the
@@ -189,11 +190,11 @@ google-health-mcp import         Import exported JSON data files
 
 ## MCP tool reference
 
-Query tools sync on the first query of each day per data type, then read the cache.
+Query tools sync on the first query of each day per data type, then read the cache. Types a tool reads together sync together when any of them is due.
 
 All query tools except `health_get_devices`, `health_get_lifetime_stats`, `health_get_profile` and `health_get_exercise_route` accept:
 
-- `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: 30 days back from the end date or today, whichever is earlier. `health_get_height` goes back ten years instead, and `health_get_activity_events` 7 days.
+- `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: 30 days back from the end date or today, whichever is earlier. `health_get_height` goes back ten years instead. `health_get_activity_events` goes back 7 days, and so does `health_get_food_log` with `include_entries`.
 - `end_date` - `YYYY-MM-DD`, `YYYY-MM` (its last day), or `30d`. Default: today.
 - `live` - if true, re-fetch this window from the API before reading the cache. A failed refresh is reported rather than silently answered from the cache.
 
@@ -204,6 +205,8 @@ A start after the end, or a date of the right shape that does not exist, such as
 `health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. It also takes `include_detail`: without it each workout carries how many exercise events, splits and split summaries it has, rather than every one. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead. `health_get_sleep_sessions` also takes `include_stages`, for the same reason: without it each session carries how many stage segments, short awakenings and out-of-bed segments it has, rather than every one.
 
 `health_get_breathing_rate` also takes `include_sleep_summaries`, which adds Google's breathing-rate summaries by sleep stage. A night can carry several, each with its own sample time.
+
+`health_get_food_log` also takes `include_entries`, which adds each food and drink you logged, with the fields Google sends for it. A food carries its name, meal, serving, calories and nutrients, and a drink its amount. Each entry carries its time in UTC and the offset that gives your local time. When either is due for its daily sync, the totals and the entries are synced together. A query syncs once a day, from a few days before the last sync. For an entry logged since then, or for an older date, pass `live=True`.
 
 `health_get_activity_events` defaults to the last 7 days rather than 30, since a day can hold dozens of sedentary periods. It returns each event's start, end and values; `include_records` returns each one exactly as Google sent it instead.
 
@@ -219,11 +222,11 @@ A start after the end, or a date of the right shape that does not exist, such as
 
 **A sync adds and corrects, and never removes.** An entry deleted in the app it was logged in simply stops appearing in the API, with nothing to say it was deleted, so a re-sync of that window leaves the cached row as it was. The API offers no tombstone, no change feed and no modified-since filter, so there is nothing to detect it by. In practice this reaches only the types you fill in by hand, since a device series is not deleted after the fact. Re-creating the cache is the way to clear one.
 
-Sedentary periods, altitude gains, swim lengths and the sleep-stage breathing summaries are kept a day at a time. A re-sync replaces each day's events with what Google sends now. A day Google sends nothing for keeps what it had.
+Some types are the exception, because they are kept a day at a time: sedentary periods, altitude gains and swim lengths. So are the sleep-stage breathing summaries and each food and drink logged. A re-sync replaces each such day with what Google sends for it now. An entry Google no longer sends for a day leaves the cache when that day is synced again. A day Google sends nothing for keeps what it had.
 
 ### health_trends
 
-- `data_type` - any cached type with a daily series. ECG readings and rhythm alerts are episodes, so they have no trend. Nor do the records: sleep sessions, individual readings, heart-rate zones and the day-at-a-time events. Default: `activity`.
+- `data_type` - any cached type with a daily series. ECG readings and rhythm alerts are episodes, so they have no trend. Nor do the records: sleep sessions, individual readings and heart-rate zones. Nor does anything kept a day at a time. Default: `activity`.
 - `period` - `weekly`, `monthly`, `quarterly`. Default: `monthly`.
 - `start_date` / `end_date` - default: 365 days back from the end date or today, whichever is earlier.
 - `compare` - two periods, e.g. `last_30d vs previous_30d`, `2026-03 vs 2026-02`, `2026-Q1 vs 2025-Q4`. When set, `period`, `start_date` and `end_date` are ignored. A period that names no dates, such as `2026-13` or `last_0d`, is refused.

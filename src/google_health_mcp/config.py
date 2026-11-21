@@ -160,4 +160,6 @@ CACHED_DATA_TYPES = (
     "altitude_gains",
     "swim_lengths",
     "respiratory_rate_sleep",
+    "food_entries",
+    "water_entries",
 )

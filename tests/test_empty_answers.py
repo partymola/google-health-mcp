@@ -20,6 +20,7 @@ from google_health_mcp.tools import (
     breathing_rate_tools,
     cardio_fitness_tools,
     exercise_tools,
+    food_tools,
     heart_tools,
     hrv_tools,
     profile_tools,
@@ -31,7 +32,7 @@ from google_health_mcp.tools import (
 )
 
 #: (module, tool, message, note) for every tool whose empty answer can offer
-#: a re-fetch. food_log is not here: its note never offered one.
+#: a re-fetch.
 _TOOLS = [
     (activity_tools, "health_get_activity", "No activity data found for this period.", None),
     (
@@ -54,6 +55,12 @@ _TOOLS = [
         "Requires age/sex profile and recent walking/running data.",
     ),
     (exercise_tools, "health_get_exercises", "No exercise entries found for this period.", None),
+    (
+        food_tools,
+        "health_get_food_log",
+        "No food log data found for this period.",
+        "Food and water are logged by hand, so most days have none.",
+    ),
     (heart_tools, "health_get_heart_rate", "No heart rate data found for this period.", None),
     (
         heart_tools,
@@ -108,7 +115,7 @@ _TOOLS = [
 _IDS = [name for _module, name, _message, _note in _TOOLS]
 
 #: Tools that take `live` and are deliberately not in the list above.
-_NOT_LISTED = {"health_get_food_log"}
+_NOT_LISTED: set[str] = set()
 
 
 async def test_every_tool_with_a_live_flag_is_listed_or_excused():

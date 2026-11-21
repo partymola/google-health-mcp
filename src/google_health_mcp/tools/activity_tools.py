@@ -70,7 +70,8 @@ async def health_get_activity_events(
 ) -> str:
     """Get activity events over a date range: sedentary periods, altitude gains, swim lengths.
 
-    Each event's start and end (UTC) and the values Google sends with it, as
+    Each event's start and end (UTC), start_utc_offset for the local time,
+    and the values Google sends with it, as
     sent: gainMillimeters for an altitude gain, strokeCount for a swim length,
     integers often as strings. Google counts altitude among its true zeros, so
     an interval with no gain field is a gain of none. Swim lengths are
@@ -130,6 +131,7 @@ async def health_get_activity_events(
                         "date": day["date"],
                         "start_time": interval.get("startTime"),
                         "end_time": interval.get("endTime"),
+                        "start_utc_offset": interval.get("startUtcOffset"),
                     }
                 )
         body[table] = events

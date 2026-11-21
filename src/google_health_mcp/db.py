@@ -287,6 +287,18 @@ CREATE TABLE IF NOT EXISTS respiratory_rate_sleep (
     provider TEXT
 );
 
+CREATE TABLE IF NOT EXISTS food_entries (
+    date TEXT PRIMARY KEY,
+    points TEXT,
+    provider TEXT
+);
+
+CREATE TABLE IF NOT EXISTS water_entries (
+    date TEXT PRIMARY KEY,
+    points TEXT,
+    provider TEXT
+);
+
 CREATE TABLE IF NOT EXISTS authorisation (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     missing_scopes TEXT,
@@ -403,13 +415,22 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "altitude_gains": ("date",),
     "swim_lengths": ("date",),
     "respiratory_rate_sleep": ("date",),
+    "food_entries": ("date",),
+    "water_entries": ("date",),
     "authorisation": ("id",),
 }
 
 #: Tables holding one row a local day with that day's points as Google
 #: answered them, which a re-sync of the day replaces whole.
 _DAY_LIST_TABLES = frozenset(
-    {"sedentary_periods", "altitude_gains", "swim_lengths", "respiratory_rate_sleep"}
+    {
+        "sedentary_periods",
+        "altitude_gains",
+        "swim_lengths",
+        "respiratory_rate_sleep",
+        "food_entries",
+        "water_entries",
+    }
 )
 
 #: The text column each table stores zlib-compressed, as a BLOB in a column
@@ -593,6 +614,14 @@ def save_respiratory_rate_sleep(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "respiratory_rate_sleep", row)
 
 
+def save_food_entries(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "food_entries", row)
+
+
+def save_water_entries(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "water_entries", row)
+
+
 def save_authorisation(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "authorisation", row)
 
@@ -735,6 +764,8 @@ _DATA_TABLE_MAP: dict[str, str] = {
     "altitude_gains": "altitude_gains",
     "swim_lengths": "swim_lengths",
     "respiratory_rate_sleep": "respiratory_rate_sleep",
+    "food_entries": "food_entries",
+    "water_entries": "water_entries",
 }
 
 
@@ -1071,7 +1102,9 @@ def query_day_lists(
     days = []
     for row in rows:
         day = dict(row)
-        day["points"] = _decoded(_unpacked(day["points"]))
+        points = _decoded(_unpacked(day["points"]))
+        # Anything but a list is unreadable, like text that will not parse.
+        day["points"] = points if isinstance(points, list) else None
         days.append(day)
     return days
 

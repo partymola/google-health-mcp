@@ -226,8 +226,15 @@ def _run_sync_types(conn, data_types, results, since_date, until_date, today, da
     return results
 
 
-def auto_sync_if_stale(data_type: str) -> None:
-    """Sync data_type if it has never been synced or last sync was before today.
+def auto_sync_if_stale(*data_types: str) -> None:
+    """Sync the types if any has never been synced or last synced before today.
+
+    Several types given together are synced together whenever any is stale,
+    so a reply reading a total beside its parts does not get a morning total
+    beside afternoon entries from this gate. A refresh of one of them alone,
+    by `live` or `health_sync`, can still leave them apart until the next day.
+    The cost is deliberate: while one of them keeps failing, every query
+    re-syncs the others with it.
 
     Failures are silently suppressed - the caller should still query the cache.
     This ensures tools work on first use without requiring an explicit health_sync call.
@@ -240,31 +247,36 @@ def auto_sync_if_stale(data_type: str) -> None:
     try:
         conn = db.get_db()
         try:
-            last_sync = db.get_last_sync_time(conn, data_type)
+            last_syncs = [db.get_last_sync_time(conn, t) for t in data_types]
         finally:
             conn.close()
 
         # `synced_at` is stored in UTC and "today" is local, so compare in local
         # time: otherwise, east of UTC, a sync made after local midnight reads
         # as yesterday's and every query re-syncs until UTC catches up.
-        if last_sync is not None and last_sync.astimezone().date() >= date.today():
+        if all(
+            last is not None and last.astimezone().date() >= date.today() for last in last_syncs
+        ):
             return
 
-        run_sync([data_type])
+        run_sync(list(data_types))
     except Exception as e:
-        logger.debug("Auto-sync failed for %s: %s", data_type, type(e).__name__)
+        logger.debug("Auto-sync failed for %s: %s", ",".join(data_types), type(e).__name__)
 
 
-def refresh_before_query(data_type: str, start: date, end: date, live: bool) -> None:
-    """Bring the cache up to date for one type, then let the caller read it.
+def refresh_before_query(
+    data_type: str | tuple[str, ...], start: date, end: date, live: bool
+) -> None:
+    """Bring the cache up to date for one type, or several together, then let the caller read it.
 
     `live` skips the once-a-day gate and syncs exactly the window asked for.
     It raises where auto-sync would swallow: run_sync reports failure in its
     return value rather than by raising, so a caller that ignores the result
     answers a live request out of the cache without saying so.
     """
+    data_types = (data_type,) if isinstance(data_type, str) else tuple(data_type)
     if not live:
-        auto_sync_if_stale(data_type)
+        auto_sync_if_stale(*data_types)
         return
 
     if config.OFFLINE_MODE:
@@ -275,12 +287,13 @@ def refresh_before_query(data_type: str, start: date, end: date, live: bool) -> 
             "the cache is served as-is."
         )
 
-    result = run_sync([data_type], since=start.isoformat(), until=end.isoformat())
-    status = result.get(data_type, {}).get("status")
-    if status != "ok":
-        # The status word only. These paths carry API responses, and the
-        # accompanying notes are not this function's to widen.
-        raise LiveRefreshFailed(f"live refresh of {data_type} failed: {status or 'no result'}")
+    result = run_sync(list(data_types), since=start.isoformat(), until=end.isoformat())
+    for name in data_types:
+        status = result.get(name, {}).get("status")
+        if status != "ok":
+            # The status word only. These paths carry API responses, and the
+            # accompanying notes are not this function's to widen.
+            raise LiveRefreshFailed(f"live refresh of {name} failed: {status or 'no result'}")
 
 
 @mcp.tool(structured_output=False)
@@ -307,7 +320,8 @@ async def health_sync(
             "cardio_fitness", "food_log", "ecg", "irn", "account", "height",
             "exercise_routes", "sleep_sessions", "weight_readings",
             "body_fat_readings", "sedentary_periods", "altitude_gains",
-            "swim_lengths", "respiratory_rate_sleep".
+            "swim_lengths", "respiratory_rate_sleep", "food_entries",
+            "water_entries".
             Comma-separated for multiple, e.g. "sleep,hrv". Default: "all".
         days: Days of history for first sync (default: 30). Ignored
             on subsequent syncs (uses last synced date).
@@ -321,7 +335,7 @@ async def health_sync(
 
     Returns summary of records synced per data type; for the day-at-a-time
     types (sedentary_periods, altitude_gains, swim_lengths,
-    respiratory_rate_sleep) the count is of days.
+    respiratory_rate_sleep, food_entries, water_entries) the count is of days.
     Not for querying data - use health_get_heart_rate, health_get_activity,
     health_get_sleep, etc. instead.
     """

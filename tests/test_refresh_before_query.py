@@ -82,6 +82,60 @@ class TestALiveQuery:
         assert str(caught.value) == "live refresh of spo2 failed: error"
 
 
+class TestSeveralTypesTogether:
+    """A reply reading a total beside its parts must read them as of one sync."""
+
+    def test_a_live_query_syncs_them_in_one_run(self, calls, monkeypatch):
+        def _fake(data_types, days=30, since=None, until=None, handlers=None):
+            calls["sync"].append((tuple(data_types), since, until))
+            return {t: {"status": "ok"} for t in data_types}
+
+        monkeypatch.setattr(sync_tools, "run_sync", _fake)
+        sync_tools.refresh_before_query(
+            ("food_log", "food_entries"), date(2026, 3, 1), date(2026, 3, 5), live=True
+        )
+        assert calls["sync"] == [(("food_log", "food_entries"), "2026-03-01", "2026-03-05")]
+
+    def test_a_live_query_fails_if_any_of_them_fails(self, calls, monkeypatch):
+        monkeypatch.setattr(
+            sync_tools,
+            "run_sync",
+            lambda *a, **k: {"food_log": {"status": "ok"}, "food_entries": {"status": "error"}},
+        )
+        with pytest.raises(RuntimeError) as caught:
+            sync_tools.refresh_before_query(
+                ("food_log", "food_entries"), date(2026, 3, 1), date(2026, 3, 5), live=True
+            )
+        assert str(caught.value) == "live refresh of food_entries failed: error"
+
+    @pytest.mark.parametrize(
+        "synced,expected",
+        [
+            ({"food_log": "today", "food_entries": "today"}, []),
+            ({"food_log": "today", "food_entries": "yesterday"}, [["food_log", "food_entries"]]),
+            ({"food_log": "today"}, [["food_log", "food_entries"]]),
+        ],
+        ids=["both-fresh", "one-stale", "one-never"],
+    )
+    def test_an_ordinary_query_syncs_them_all_when_any_is_stale(
+        self, monkeypatch, synced, expected
+    ):
+        from datetime import datetime, timedelta
+
+        now = datetime.now().astimezone()
+        when = {"today": now, "yesterday": now - timedelta(days=1)}
+        monkeypatch.setattr(
+            sync_tools.db, "get_db", lambda: type("C", (), {"close": lambda self: None})()
+        )
+        monkeypatch.setattr(
+            sync_tools.db, "get_last_sync_time", lambda conn, t: when.get(synced.get(t))
+        )
+        ran = []
+        monkeypatch.setattr(sync_tools, "run_sync", lambda types: ran.append(types))
+        sync_tools.auto_sync_if_stale("food_log", "food_entries")
+        assert ran == expected
+
+
 class TestOfflineMode:
     def test_live_is_refused_rather_than_quietly_downgraded(self, calls, monkeypatch):
         """And refused as HealthOfflineError specifically.

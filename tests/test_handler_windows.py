@@ -10,9 +10,13 @@ from unittest.mock import patch
 
 import pytest
 
+from google_health_mcp import db
 from google_health_mcp.tools import google_sync
 
 _DAY = date(2026, 3, 15)
+
+#: Every handler storing a day at a time, each named for its table.
+_DAY_LIST_HANDLERS = sorted(set(google_sync.GOOGLE_SYNC_HANDLERS) & db._DAY_LIST_TABLES)
 
 
 def _windows(tmp_db, handler, day):
@@ -43,16 +47,27 @@ def test_every_handler_asks_for_the_day_it_is_given(tmp_db):
             assert start <= _DAY < end, f"{name} asked {data_type} for [{start}, {end})"
 
 
-@pytest.mark.parametrize(
-    "handler",
-    [
-        google_sync.sync_sedentary_periods,
-        google_sync.sync_altitude_gains,
-        google_sync.sync_swim_lengths,
-        google_sync.sync_respiratory_rate_sleep,
-    ],
-)
-def test_the_margin_stops_at_the_first_date_there_is(tmp_db, handler):
+def test_the_handlers_storing_a_day_at_a_time_are_the_day_list_tables(tmp_db):
+    """Found by what each handler calls, so one missing from the tables cannot hide."""
+    storing = set()
+    for name, handler in google_sync.GOOGLE_SYNC_HANDLERS.items():
+        with patch.object(google_sync, "_store_day_lists", return_value=0) as store:
+            _windows(tmp_db, handler, _DAY)
+        if store.called:
+            storing.add(name)
+    assert storing == db._DAY_LIST_TABLES == set(_DAY_LIST_HANDLERS)
+
+
+@pytest.mark.parametrize("name", _DAY_LIST_HANDLERS)
+def test_a_day_list_request_has_a_day_of_margin_each_side(tmp_db, name):
+    handler = google_sync.GOOGLE_SYNC_HANDLERS[name]
+    ((_, start, end),) = _windows(tmp_db, handler, _DAY)
+    assert (start, end) == (date(2026, 3, 14), date(2026, 3, 17))
+
+
+@pytest.mark.parametrize("name", _DAY_LIST_HANDLERS)
+def test_the_margin_stops_at_the_first_date_there_is(tmp_db, name):
     """A backfill from the first representable date has no day before it."""
+    handler = google_sync.GOOGLE_SYNC_HANDLERS[name]
     ((_, start, _end),) = _windows(tmp_db, handler, date.min)
     assert start == date.min

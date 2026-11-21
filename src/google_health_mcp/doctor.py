@@ -737,12 +737,15 @@ _ESTABLISHED_DAYS = 15
 #:
 #: `exercise_routes` follows `exercises`, one route per GPS workout, and
 #: `height` is logged a handful of times in a lifetime. `weight_readings` and
-#: `body_fat_readings` are the same weigh-ins as `weight`, one row per reading.
+#: `body_fat_readings` are the same weigh-ins as `weight`, one row per reading,
+#: and `food_entries` and `water_entries` the entries `food_log` totals.
 _USER_LOGGED_TYPES = frozenset(
     {
         "exercises",
         "exercise_routes",
         "food_log",
+        "food_entries",
+        "water_entries",
         "weight",
         "weight_readings",
         "body_fat_readings",

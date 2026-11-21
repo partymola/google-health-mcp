@@ -678,9 +678,10 @@ def _with_margin(start, end):
 def _store_day_lists(conn, points, field: str, day_of, save, start, end) -> int:
     """Each local day in [start, end] the answer holds, stored as its points as sent.
 
-    For types whose points carry no usable name, and whose intervals Google
-    may revise after first sending them: no per-point key survives that, so
-    the day is the row and a re-sync of it replaces the day's points. A row is
+    For types where a per-point key would not hold: points with no usable
+    name, whose intervals Google may revise after first sending them, or
+    entries a person deletes. The day is the row, and a re-sync of it
+    replaces the day's points. A row is
     written only for a day the answer holds, from an answer paged to
     exhaustion, so no row is ever removed. Days outside [start, end] are the
     request's margin and are left alone. The fetch stays in each handler,
@@ -745,6 +746,28 @@ def sync_respiratory_rate_sleep(conn, start, end) -> int:
         db.save_respiratory_rate_sleep,
         start,
         end,
+    )
+
+
+def sync_food_entries(conn, start, end) -> int:
+    """Each food logged, as sent: name, meal, serving, energy and nutrients.
+
+    Kept a day at a time rather than by each entry's own name, because an
+    entry Google stops sending would otherwise stay stored for good, beside
+    the day's total in `food_log`. A day the answer holds nothing for keeps
+    its last list.
+    """
+    points = api.list_google_data_points("nutrition-log", *_with_margin(start, end))
+    return _store_day_lists(
+        conn, points, "nutritionLog", _interval_day, db.save_food_entries, start, end
+    )
+
+
+def sync_water_entries(conn, start, end) -> int:
+    """Each drink logged, as sent. Kept a day at a time, as food entries are."""
+    points = api.list_google_data_points("hydration-log", *_with_margin(start, end))
+    return _store_day_lists(
+        conn, points, "hydrationLog", _interval_day, db.save_water_entries, start, end
     )
 
 
@@ -1188,6 +1211,8 @@ GOOGLE_SYNC_HANDLERS = {
     "altitude_gains": sync_altitude_gains,
     "swim_lengths": sync_swim_lengths,
     "respiratory_rate_sleep": sync_respiratory_rate_sleep,
+    "food_entries": sync_food_entries,
+    "water_entries": sync_water_entries,
 }
 
 _METRICS = ("health_metrics_and_measurements",)
@@ -1223,4 +1248,6 @@ HANDLER_SCOPES = {
     "altitude_gains": _ACTIVITY,
     "swim_lengths": _ACTIVITY,
     "respiratory_rate_sleep": _METRICS,
+    "food_entries": ("nutrition",),
+    "water_entries": ("nutrition",),
 }

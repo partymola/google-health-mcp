@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased - 1.13.0
 
-This release adds heart-rate zones, sedentary periods, altitude, swim lengths and breathing by sleep stage. Revised HRV, SpO2 and skin temperature days are also kept tidier.
+This release adds heart-rate zones, sedentary periods, altitude, swim lengths and breathing by sleep stage. It also adds each food and drink you log. Revised HRV, SpO2 and skin temperature days are also kept tidier.
 
 ### New data to ask for
 
@@ -15,6 +15,9 @@ This release adds heart-rate zones, sedentary periods, altitude, swim lengths an
 - `health_get_activity_events` returns each sedentary period, altitude gain and swim length. You get its start, end and values, or the whole record with `include_records`. It covers the last 7 days unless you ask for more.
 - Swim lengths are the ones your watch notices on its own. They can appear on days without a swim workout.
 - `health_get_breathing_rate` takes `include_sleep_summaries`. It adds your breathing rate for the whole night and for deep, light and REM sleep.
+- `health_get_food_log` takes `include_entries`. It adds each food and drink you logged, with its time. A food comes with its name, meal, serving, calories and nutrients, and a drink with its amount. It covers the last 7 days unless you ask for more.
+- Each event, entry and breathing summary comes with its UTC offset, which gives its local time.
+- `health_get_food_log` offers a live fetch when it finds nothing in the cache, as the other tools do.
 
 ### Steadier daily figures
 
@@ -24,8 +27,8 @@ This release adds heart-rate zones, sedentary periods, altitude, swim lengths an
 ### After upgrading
 
 - On a multi-host setup, upgrade the syncing host first and let it sync once. This release adds tables, and the first host to open the cache creates them. A cache-only host doing that would write to the shared file.
-- A first sync of the new data covers the last 30 days. For older history, run `google-health-mcp sync --types heart_rate_zones,sedentary_periods,altitude_gains,swim_lengths,respiratory_rate_sleep --since <date>`.
-- `sync --types` and `health_sync` accept those five new names.
+- A first sync of the new data covers the last 30 days. For older history, run `google-health-mcp sync --types heart_rate_zones,sedentary_periods,altitude_gains,swim_lengths,respiratory_rate_sleep,food_entries,water_entries --since <date>`.
+- `sync --types` and `health_sync` accept those seven new names.
 
 ## 1.12.0 - 2026-11-06
 

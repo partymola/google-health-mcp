@@ -37,17 +37,18 @@ async def health_get_breathing_rate(
     Returns one entry per night with breaths_per_min and data_source (the device
     and platform Google says recorded it), and count, the nights. With the
     flag also sleep_summaries, each with the local date of its sample,
-    sample_time (UTC) and data_source, and summary_count.
+    sample_time (UTC), utc_offset and data_source, and summary_count.
     Typical adult range: 12-20 bpm at rest.
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 
-    def _refresh():
-        refresh_before_query("breathing_rate", start, end, live)
-        if include_sleep_summaries:
-            refresh_before_query("respiratory_rate_sleep", start, end, live)
-
-    await anyio.to_thread.run_sync(_refresh)
+    # Together, so the daily gate syncs the nights and their summaries at once.
+    refreshed = (
+        ("breathing_rate", "respiratory_rate_sleep")
+        if include_sleep_summaries
+        else "breathing_rate"
+    )
+    await anyio.to_thread.run_sync(lambda: refresh_before_query(refreshed, start, end, live))
 
     def _query():
         conn = db.get_db()
@@ -77,6 +78,7 @@ async def health_get_breathing_rate(
                     **{k: v for k, v in payload.items() if k != "sampleTime"},
                     "date": day["date"],
                     "sample_time": (payload.get("sampleTime") or {}).get("physicalTime"),
+                    "utc_offset": (payload.get("sampleTime") or {}).get("utcOffset"),
                     "data_source": point.get("dataSource"),
                 }
             )

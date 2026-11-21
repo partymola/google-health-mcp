@@ -276,6 +276,7 @@ class TestTheTool:
                 "date": "2026-03-15",
                 "start_time": "2026-03-15T09:00:00Z",
                 "end_time": "2026-03-15T09:01:00Z",
+                "start_utc_offset": "3600s",
                 **_VALUES[field],
             }
         ]

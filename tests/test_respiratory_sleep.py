@@ -137,10 +137,11 @@ class TestTheTool:
         point = _summary("2026-03-15T05:00:00Z", 15)
         _sync(tmp_db, [point])
         body, refreshed = await _call(_path(tmp_db), include_sleep_summaries=True)
-        assert set(refreshed) == {"breathing_rate", "respiratory_rate_sleep"}
+        assert refreshed == [("breathing_rate", "respiratory_rate_sleep")]
         (summary,) = body["sleep_summaries"]
         assert summary["date"] == "2026-03-15"
         assert summary["sample_time"] == "2026-03-15T05:00:00Z"
+        assert summary["utc_offset"] == "3600s"
         assert summary["fullSleepStats"] == _STATS
         assert summary["data_source"] == point["dataSource"]
         assert "sampleTime" not in summary
@@ -195,7 +196,8 @@ class TestTheTool:
         body, _ = await _call(_path(tmp_db), end_date="2026-03-15", include_sleep_summaries=True)
         assert [s["date"] for s in body["sleep_summaries"]] == ["2026-03-15"]
 
-    async def test_both_refreshes_cover_the_window_and_carry_live(self, tmp_db):
+    async def test_both_types_refresh_together_over_the_window_and_carry_live(self, tmp_db):
+        """Together, so a night's rate and its summaries come from one sync."""
         from google_health_mcp.tools.breathing_rate_tools import health_get_breathing_rate
 
         with (
@@ -213,6 +215,10 @@ class TestTheTool:
                 include_sleep_summaries=True,
             )
         assert [c.args for c in refresh.call_args_list] == [
-            ("breathing_rate", date(2026, 3, 10), date(2026, 3, 15), True),
-            ("respiratory_rate_sleep", date(2026, 3, 10), date(2026, 3, 15), True),
+            (
+                ("breathing_rate", "respiratory_rate_sleep"),
+                date(2026, 3, 10),
+                date(2026, 3, 15),
+                True,
+            ),
         ]
