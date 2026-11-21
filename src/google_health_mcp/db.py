@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS weight (
     weight_kg REAL,
     bmi REAL,
     fat_pct REAL,
-    provider TEXT
+    provider TEXT,
+    google_columns TEXT
 );
 
 CREATE TABLE IF NOT EXISTS spo2 (
@@ -357,6 +358,7 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("core_temperature", "reading_id", "TEXT"),
     ("core_temperature", "measurement_location", "TEXT"),
     ("core_temperature", "data_source", "TEXT"),
+    ("weight", "google_columns", "TEXT"),
 )
 
 
@@ -552,10 +554,64 @@ def save_core_temperature(conn: sqlite3.Connection, row: dict):
 
     Timestamps are second-resolution, so two distinct readings can share one,
     and the pair keeps both unless their values match too. A reading whose
-    value is edited upstream is a new row rather than a correction, since the
-    value is part of its key.
+    value is edited upstream lands under a new key, and the sync then removes
+    the old one as a reading Google no longer holds.
     """
     _upsert(conn, "core_temperature", row)
+
+
+def rows_written_by(
+    conn: sqlite3.Connection, table: str, provider: str, first_date: str, last_date: str
+) -> list[dict]:
+    """The rows `provider` last wrote with a date in [first_date, last_date], raw."""
+    if table not in _UPSERT_KEYS:
+        raise ValueError(f"{table} is not a cached table")
+    return [
+        dict(row)
+        for row in conn.execute(
+            f"SELECT * FROM {table} WHERE provider = ? AND date >= ? AND date <= ?",
+            (provider, first_date, last_date),
+        )
+    ]
+
+
+def google_columns(
+    conn: sqlite3.Connection, table: str, first_date: str, last_date: str
+) -> dict[str, set]:
+    """For each day in range, the columns Google is recorded as having written.
+
+    Only `weight` keeps the record: an import writes that table too, and
+    `provider` names only a row's last writer.
+    """
+    if table != "weight":
+        raise ValueError(f"{table} keeps no record of the columns Google wrote")
+    written = {}
+    for row in conn.execute(
+        "SELECT date, google_columns FROM weight WHERE date >= ? AND date <= ?",
+        (first_date, last_date),
+    ):
+        value = _decoded(row[1])
+        written[row[0]] = set(value) if isinstance(value, list) else set()
+    return written
+
+
+def remove_rows(conn: sqlite3.Connection, table: str, rows: list[dict]) -> int:
+    """Delete these rows, each found by its table's key. Returns how many went.
+
+    The only removal in the package. A sync calls it for what Google no
+    longer holds, once it has Google's complete answer for the dates the rows
+    carry.
+    """
+    keys = _UPSERT_KEYS.get(table)
+    if keys is None:
+        raise ValueError(f"{table} is not a cached table")
+    where = " AND ".join(f"{k} = ?" for k in keys)
+    removed = 0
+    for row in rows:
+        removed += conn.execute(
+            f"DELETE FROM {table} WHERE {where}", [row[k] for k in keys]
+        ).rowcount
+    return removed
 
 
 def save_cardio_fitness(conn: sqlite3.Connection, row: dict):
@@ -913,7 +969,8 @@ def query_weight(conn: sqlite3.Connection, start_date: str, end_date: str) -> li
         "SELECT * FROM weight WHERE date >= ? AND date <= ? ORDER BY date",
         (start_date, end_date),
     ).fetchall()
-    return _rows_to_dicts(rows)
+    # Bookkeeping for the sync, not a reading.
+    return [{k: v for k, v in r.items() if k != "google_columns"} for r in _rows_to_dicts(rows)]
 
 
 def query_spo2(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:

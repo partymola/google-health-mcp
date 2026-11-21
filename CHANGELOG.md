@@ -24,6 +24,10 @@ This release adds heart-rate zones, sedentary periods, altitude, swim lengths an
 - Some figures arrive only with Google's own readings: HRV entropy and non-REM heart rate, the SpO2 bounds and spread, and every skin temperature figure. When Google revises such a day, these follow the revision. A figure the revised day lacks is cleared, not left behind. Imported history is untouched.
 - VO2 max is read under the activity and fitness permission, where Google's data-type reference lists it.
 
+### When you correct a reading
+
+- A body temperature you edit in the app now replaces its old value at the next sync, so trends count it once.
+
 ### After upgrading
 
 - On a multi-host setup, upgrade the syncing host first and let it sync once. This release adds tables, and the first host to open the cache creates them. A cache-only host doing that would write to the shared file.

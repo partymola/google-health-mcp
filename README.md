@@ -220,9 +220,9 @@ A start after the end, or a date of the right shape that does not exist, such as
 - `days` - days of history for a first sync (default: 30). Later syncs are incremental.
 - `since` / `until` - fetch an exact window regardless of what is cached.
 
-**A sync adds and corrects, and never removes.** An entry deleted in the app it was logged in simply stops appearing in the API, with nothing to say it was deleted, so a re-sync of that window leaves the cached row as it was. The API offers no tombstone, no change feed and no modified-since filter, so there is nothing to detect it by. In practice this reaches only the types you fill in by hand, since a device series is not deleted after the fact. Re-creating the cache is the way to clear one.
+**What you delete or change in the app is deleted or changed in the cache.** That covers food, drink, body temperature, weigh-ins, body fat and workouts, whether you logged a workout or the watch recorded it. An entry deleted in the app simply stops appearing in the API, with nothing to say it was deleted. So once a sync has Google's whole answer for its dates, it removes what Google no longer holds for those dates. It never touches imported history or dates outside the sync. If Google's answer holds something the sync cannot place, it removes nothing that run. An ordinary sync covers only the last few days, so for a deletion further back, or an entry moved to an earlier date, run `health_rebuild` or `sync --since` over those dates.
 
-Some types are the exception, because they are kept a day at a time: sedentary periods, altitude gains and swim lengths. So are the sleep-stage breathing summaries and each food and drink logged. A re-sync replaces each such day with what Google sends for it now. An entry Google no longer sends for a day leaves the cache when that day is synced again. A day Google sends nothing for keeps what it had.
+A device series is not deleted after the fact, so a sync never removes from it. Sedentary periods, altitude gains, swim lengths and the sleep-stage breathing summaries are kept a day at a time. A re-sync replaces each such day with what Google sends for it now. A day Google sends nothing for keeps what it had.
 
 ### health_trends
 

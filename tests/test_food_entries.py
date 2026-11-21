@@ -1,9 +1,8 @@
 """Each food and drink logged, kept a day at a time.
 
-Entries are logged by hand, and deleting one is ordinary. A sync never
-removes a row, so a table keyed by each entry's name would keep a deleted
-entry for good. Storing the day's entries as one row, replaced on a re-sync,
-keeps it in step with what Google sends for each day it answers.
+Entries are logged by hand, and deleting or editing one is ordinary. The
+day's entries are one row, replaced on a re-sync, and a day Google no
+longer answers for is removed, so the cache holds what Google holds.
 """
 
 import json
@@ -137,16 +136,15 @@ class TestADayIsItsEntries:
         (row,) = _days(table, tmp_db)
         assert row["points"] == [kept]
 
-    def test_a_day_emptied_in_the_app_keeps_its_last_entries(
+    def test_a_day_emptied_in_the_app_is_removed(
         self, tmp_db, handler, data_type, field, values, table
     ):
-        """Intended: an answer holding nothing for a day writes nothing, as for
-        every day-list type, so no row is ever removed."""
+        """Measured: a day whose every entry is deleted is absent from every
+        view, so the cache drops it as Google has."""
         point = _entry(field, values, "2026-03-15T12:00:00Z", 15)
         _sync(tmp_db, handler, data_type, [point])
         _sync(tmp_db, handler, data_type, [])
-        (row,) = _days(table, tmp_db)
-        assert row["points"] == [point]
+        assert _days(table, tmp_db) == []
 
     def test_an_entry_is_dated_by_the_civil_start_the_filter_reads(
         self, tmp_db, handler, data_type, field, values, table

@@ -127,8 +127,10 @@ class TestFoodLogMergesItsTwoSources:
         assert row["calories_in"] == 1850.5
         assert row["water_ml"] == 1250.5
 
-    def test_a_day_with_only_water_keeps_the_calories_already_stored(self, tmp_db, sync_food_log):
-        """The two sources are independent, and a quiet one withdraws nothing."""
+    def test_a_day_with_only_water_withdraws_the_calories_google_no_longer_reports(
+        self, tmp_db, sync_food_log
+    ):
+        """The day's food was all deleted, so Google reports none for it."""
         db.save_food_log(tmp_db, {"date": "2026-03-15", "calories_in": 2000, "water_ml": 500})
         tmp_db.commit()
         sync_food_log(
@@ -139,7 +141,7 @@ class TestFoodLogMergesItsTwoSources:
             }
         )
         row = db.query_food_log(tmp_db, "2026-03-15", "2026-03-15")[0]
-        assert row["calories_in"] == 2000
+        assert row["calories_in"] is None
         assert row["water_ml"] == 900
 
     def test_the_list_form_leaf_names_are_not_what_it_reads(self, tmp_db, sync_food_log):

@@ -658,10 +658,6 @@ async def health_trends(
     `compare=` reports spo2 as avg_spo2 alone, and carries both cardio_fitness
     definitions.
 
-    For core_temperature, a reading whose value was changed in the app is
-    counted as well as its earlier value, in both forms: check a high
-    max_temp_celsius or readings_ge_38c with health_get_core_temperature.
-
     Not for raw data - use health_get_* tools instead.
     """
 

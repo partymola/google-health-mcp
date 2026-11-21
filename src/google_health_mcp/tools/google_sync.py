@@ -75,6 +75,84 @@ def _date(payload: dict) -> str | None:
         return None
 
 
+def _remove_absent(conn, table: str, start, end, held: set, key_of, unreadable: bool) -> int:
+    """Remove what this provider wrote for [start, end] that the answer no longer holds.
+
+    For the types a person logs and deletes by hand: Google stops sending a
+    deleted entry with nothing to say so, and the cache should answer as
+    Google does. Called once the handler has Google's complete answer for
+    those dates, since every walk raises rather than return part of one.
+    Rows another provider or an import wrote are never touched. An answer
+    holding a point the handler could not read removes nothing, because that
+    point may be one already stored. Returns the rows removed.
+    """
+    if unreadable:
+        logger.info("kept every stored %s row: the answer held a point it could not read", table)
+        return 0
+    stored = db.rows_written_by(conn, table, PROVIDER, start.isoformat(), end.isoformat())
+    removed = db.remove_rows(conn, table, [row for row in stored if key_of(row) not in held])
+    if removed:
+        logger.info(
+            "removed %d %s row(s) Google no longer holds for %s to %s", removed, table, start, end
+        )
+    return removed
+
+
+def _withdraw_absent(
+    conn,
+    table: str,
+    start,
+    end,
+    held: dict[str, set],
+    values: tuple,
+    save,
+    unreadable: bool,
+    owned: str | None = None,
+) -> int:
+    """Clear each column this provider wrote on a day its source no longer answers for.
+
+    For a daily row built from several sources, any of which a person can
+    empty by deleting a day's entries: `held` maps each column to the days
+    its source still answers for. `provider` names only a row's last writer,
+    so on a table an import also writes, `owned` names the column listing
+    which columns this provider wrote, and only those are withdrawn; an
+    import's value beside them stays. A row left with none of `values` is
+    removed. Returns the rows changed or removed.
+    """
+    if unreadable:
+        logger.info("kept every stored %s row: the answer held a point it could not read", table)
+        return 0
+    changed = 0
+    for row in db.rows_written_by(conn, table, PROVIDER, start.isoformat(), end.isoformat()):
+        mine = set(held) if owned is None else set(_decoded_list(row[owned]))
+        withdrawn = {
+            column: None
+            for column, days in held.items()
+            if column in mine and row[column] is not None and row["date"] not in days
+        }
+        if not withdrawn:
+            continue
+        if all({**row, **withdrawn}[column] is None for column in values):
+            db.remove_rows(conn, table, [row])
+        else:
+            if owned is not None:
+                withdrawn[owned] = json.dumps(sorted(mine - set(withdrawn)))
+            save(conn, {"date": row["date"], **withdrawn})
+        changed += 1
+    if changed:
+        logger.info("withdrew from %d %s row(s) for %s to %s", changed, table, start, end)
+    return changed
+
+
+def _decoded_list(text) -> list:
+    """A stored JSON list of column names, or an empty one if it is anything else."""
+    try:
+        value = json.loads(text) if isinstance(text, str) else None
+    except ValueError:
+        return []
+    return value if isinstance(value, list) else []
+
+
 def _window(start, end):
     """The half-open window a Google filter needs, from the loop's inclusive one.
 
@@ -320,8 +398,14 @@ def _rollup_date(point: dict) -> str | None:
 _TRUE_ZERO_TYPES = frozenset({"steps", "distance", "floors", "total-calories", "altitude"})
 
 
-def _rollup_values(data_type: str, start, end, field: str, extract) -> dict:
+def _rollup_values(
+    data_type: str, start, end, field: str, extract, skipped=None, seen=None
+) -> dict:
     """Map of day to extracted value for one rollup type.
+
+    `skipped`, given a list, collects every point with no readable date;
+    `seen`, given a set, collects every day a point arrived for whose value
+    could not be read, which is still a day Google answers for.
 
     Three states, not two. No point for a day means the day is unknown and it
     is absent from the map. A point present whose value field is omitted means
@@ -337,13 +421,17 @@ def _rollup_values(data_type: str, start, end, field: str, extract) -> dict:
     for point in api.daily_roll_up(data_type, *_window(start, end)):
         day = _rollup_date(point)
         payload = point.get(field)
-        if day is None or not isinstance(payload, dict):
+        if day is None:
+            if skipped is not None:
+                skipped.append(point)
             continue
-        extracted = extract(payload)
+        extracted = extract(payload) if isinstance(payload, dict) else None
         if extracted is not None:
             values[day] = extracted
-        elif data_type in _TRUE_ZERO_TYPES:
+        elif data_type in _TRUE_ZERO_TYPES and isinstance(payload, dict):
             values[day] = 0
+        elif seen is not None:
+            seen.add(day)
     return values
 
 
@@ -583,14 +671,15 @@ def _civil(payload: dict) -> tuple[str | None, str | None]:
     return day, stamp
 
 
-def _samples(data_type: str, field: str, start, end):
+def _samples(data_type: str, field: str, start, end, skipped: list):
+    """Each readable sample in the window; `skipped` collects the rest."""
     for point in api.list_google_data_points(data_type, *_window(start, end)):
         payload = point.get(field)
-        if not isinstance(payload, dict):
+        day, stamp = _civil(payload) if isinstance(payload, dict) else (None, None)
+        if day is None:
+            skipped.append(point)
             continue
-        day, stamp = _civil(payload)
-        if day is not None:
-            yield day, stamp, payload
+        yield day, stamp, payload
 
 
 def sync_weight(conn, start, end) -> int:
@@ -599,37 +688,65 @@ def sync_weight(conn, start, end) -> int:
     They are recorded by the same event on the scales, so a reading of each
     belongs in one row. `bmi` is never written - Google reports height and
     weight but no BMI, and computing one would put a derived value in a
-    column holding measured ones.
+    column holding measured ones. A day whose weigh-ins or body-fat readings
+    were all deleted has that figure withdrawn. An import writes this table
+    too, so `google_columns` lists which columns Google wrote, and only those
+    are ever withdrawn; an imported figure on the same day stays.
     """
     days: dict[str, dict] = {}
-    for day, _stamp, payload in _samples("weight", "weight", start, end):
+    # A day a reading arrived for is a day Google still holds, even when the
+    # reading's value cannot be read.
+    held: dict[str, set] = {"weight_kg": set(), "fat_pct": set()}
+    undated: list = []
+    for day, _stamp, payload in _samples("weight", "weight", start, end, undated):
+        held["weight_kg"].add(day)
         grams = _number(payload.get("weightGrams"), float)
         if grams is not None:
             days.setdefault(day, {"date": day, "provider": PROVIDER})["weight_kg"] = grams / 1000
-    for day, _stamp, payload in _samples("body-fat", "bodyFat", start, end):
+    for day, _stamp, payload in _samples("body-fat", "bodyFat", start, end, undated):
+        held["fat_pct"].add(day)
         percentage = _number(payload.get("percentage"), float)
         if percentage is not None:
             days.setdefault(day, {"date": day, "provider": PROVIDER})["fat_pct"] = percentage
 
-    for row in days.values():
-        db.save_weight(conn, row)
+    written = db.google_columns(conn, "weight", start.isoformat(), end.isoformat())
+    for day, row in days.items():
+        mine = written.get(day, set()) | {c for c in ("weight_kg", "fat_pct") if c in row}
+        db.save_weight(conn, {**row, "google_columns": json.dumps(sorted(mine))})
+    _withdraw_absent(
+        conn,
+        "weight",
+        start,
+        end,
+        held,
+        ("weight_kg", "fat_pct", "bmi"),
+        db.save_weight,
+        bool(undated),
+        owned="google_columns",
+    )
     conn.commit()
     return len(days)
 
 
-def _store_readings(conn, points, field: str, save) -> int:
+def _store_readings(conn, points, field: str, save, table: str, start, end) -> int:
     """Every sample point given, stored whole under its resource name.
 
-    Dated by the sample's own civil time, as the daily `weight` row is. The
-    fetch stays in each handler, where the scope check can read its data type.
+    Dated by the sample's own civil time, as the daily `weight` row is. A
+    reading Google no longer sends for the window is removed. The fetch
+    stays in each handler, where the scope check can read its data type.
     """
     count = 0
+    held: set = set()
+    unreadable = False
     for point in points:
         payload = point.get(field)
         identifier = point.get("name")
-        if not isinstance(payload, dict) or not isinstance(identifier, str) or not identifier:
+        if not isinstance(identifier, str) or not identifier:
+            unreadable = True
             continue
-        day, stamp = _civil(payload)
+        # Held even if it cannot be stored: Google still has it.
+        held.add(identifier)
+        day, stamp = _civil(payload) if isinstance(payload, dict) else (None, None)
         if day is None:
             continue
         save(
@@ -643,6 +760,7 @@ def _store_readings(conn, points, field: str, save) -> int:
             },
         )
         count += 1
+    _remove_absent(conn, table, start, end, held, lambda r: r["reading_id"], unreadable)
     conn.commit()
     return count
 
@@ -650,13 +768,17 @@ def _store_readings(conn, points, field: str, save) -> int:
 def sync_weight_readings(conn, start, end) -> int:
     """Every weigh-in, where the daily `weight` row keeps one a day."""
     points = api.list_google_data_points("weight", *_window(start, end))
-    return _store_readings(conn, points, "weight", db.save_weight_reading)
+    return _store_readings(
+        conn, points, "weight", db.save_weight_reading, "weight_readings", start, end
+    )
 
 
 def sync_body_fat_readings(conn, start, end) -> int:
     """Every body-fat reading, where the daily `weight` row keeps one a day."""
     points = api.list_google_data_points("body-fat", *_window(start, end))
-    return _store_readings(conn, points, "bodyFat", db.save_body_fat_reading)
+    return _store_readings(
+        conn, points, "bodyFat", db.save_body_fat_reading, "body_fat_readings", start, end
+    )
 
 
 def _interval_day(payload: dict) -> str | None:
@@ -675,30 +797,38 @@ def _with_margin(start, end):
     return max(start, date.min + timedelta(days=1)) - timedelta(days=1), end + timedelta(days=2)
 
 
-def _store_day_lists(conn, points, field: str, day_of, save, start, end) -> int:
+def _store_day_lists(
+    conn, points, field: str, day_of, save, start, end, emptied_table: str | None = None
+) -> int:
     """Each local day in [start, end] the answer holds, stored as its points as sent.
 
     For types where a per-point key would not hold: points with no usable
     name, whose intervals Google may revise after first sending them, or
     entries a person deletes. The day is the row, and a re-sync of it
-    replaces the day's points. A row is
-    written only for a day the answer holds, from an answer paged to
-    exhaustion, so no row is ever removed. Days outside [start, end] are the
+    replaces the day's points. A row is written only for a day the answer
+    holds, from an answer paged to exhaustion. With `emptied_table`, for the
+    hand-logged types, a day in [start, end] the answer no longer holds is
+    removed from that table, as a day whose every entry was deleted;
+    otherwise no row is ever removed. Days outside [start, end] are the
     request's margin and are left alone. The fetch stays in each handler,
     where the scope check can read its data type. Returns the days written.
     """
     first, last = start.isoformat(), end.isoformat()
     days: dict[str, list] = {}
+    unreadable = False
     for point in points:
         payload = point.get(field)
-        if not isinstance(payload, dict):
+        day = day_of(payload) if isinstance(payload, dict) else None
+        if day is None:
+            unreadable = True
             continue
-        day = day_of(payload)
-        if day is None or not first <= day <= last:
+        if not first <= day <= last:
             continue
         days.setdefault(day, []).append(point)
     for day, held in days.items():
         save(conn, {"date": day, "points": json.dumps(held), "provider": PROVIDER})
+    if emptied_table is not None:
+        _remove_absent(conn, emptied_table, start, end, set(days), lambda r: r["date"], unreadable)
     conn.commit()
     return len(days)
 
@@ -752,14 +882,20 @@ def sync_respiratory_rate_sleep(conn, start, end) -> int:
 def sync_food_entries(conn, start, end) -> int:
     """Each food logged, as sent: name, meal, serving, energy and nutrients.
 
-    Kept a day at a time rather than by each entry's own name, because an
-    entry Google stops sending would otherwise stay stored for good, beside
-    the day's total in `food_log`. A day the answer holds nothing for keeps
-    its last list.
+    Kept a day at a time rather than by each entry's own name, so a re-sync
+    of a day replaces its entries, and a day the answer no longer holds,
+    whose every entry was deleted, is removed.
     """
     points = api.list_google_data_points("nutrition-log", *_with_margin(start, end))
     return _store_day_lists(
-        conn, points, "nutritionLog", _interval_day, db.save_food_entries, start, end
+        conn,
+        points,
+        "nutritionLog",
+        _interval_day,
+        db.save_food_entries,
+        start,
+        end,
+        emptied_table="food_entries",
     )
 
 
@@ -767,27 +903,40 @@ def sync_water_entries(conn, start, end) -> int:
     """Each drink logged, as sent. Kept a day at a time, as food entries are."""
     points = api.list_google_data_points("hydration-log", *_with_margin(start, end))
     return _store_day_lists(
-        conn, points, "hydrationLog", _interval_day, db.save_water_entries, start, end
+        conn,
+        points,
+        "hydrationLog",
+        _interval_day,
+        db.save_water_entries,
+        start,
+        end,
+        emptied_table="water_entries",
     )
 
 
 def sync_core_temperature(conn, start, end) -> int:
     """Manually logged body temperature, keyed by timestamp and value.
 
-    Google gives these an `id`, which is stored but not keyed on: the table's
-    key predates it, and changing a primary key is a table rebuild rather than
-    a migration. The other fields are written as None when absent, since the
-    row is one reading rather than a day several writers share.
+    Google gives these an `id`, which is not keyed on: the table's key
+    predates it, and changing a primary key is a table rebuild rather than a
+    migration. A reading deleted in the app is removed, and so is the old
+    key of one edited there: an edit keeps the id and changes the value
+    (measured on a value edit), so the old key is one Google no longer
+    sends. The removal comes after every save, so a save that fails removes
+    nothing. The other fields are written as None when absent, since the row
+    is one reading rather than a day several writers share.
     """
     count = 0
+    held: set = set()
+    unreadable = False
     for point in api.list_google_data_points("core-body-temperature", *_window(start, end)):
         payload = point.get("coreBodyTemperature")
-        if not isinstance(payload, dict):
-            continue
-        day, stamp = _civil(payload)
-        celsius = _number(payload.get("temperatureCelsius"), float)
+        day, stamp = _civil(payload) if isinstance(payload, dict) else (None, None)
+        celsius = _number(payload.get("temperatureCelsius"), float) if day else None
         if day is None or celsius is None:
+            unreadable = True
             continue
+        held.add((stamp, celsius))
         db.save_core_temperature(
             conn,
             {
@@ -801,6 +950,15 @@ def sync_core_temperature(conn, start, end) -> int:
             },
         )
         count += 1
+    _remove_absent(
+        conn,
+        "core_temperature",
+        start,
+        end,
+        held,
+        lambda r: (r["datetime"], r["temp_celsius"]),
+        unreadable,
+    )
     conn.commit()
     return count
 
@@ -840,15 +998,28 @@ def sync_exercises(conn, start, end) -> int:
     """Workouts, keyed by the resource name Google gives each one.
 
     A workout with no identifier is skipped rather than stored under an empty
-    key, where each one would overwrite the last.
+    key, where each one would overwrite the last. A workout deleted in the
+    app is removed, and its route with it. Google filters workouts by their
+    civil start and they are dated here from the UTC start and offset, which
+    can disagree by a day, so the request carries a day of margin either
+    side: a workout stored under any date in [start, end] is then in the
+    answer if Google still holds it.
     """
     covered = _days_another_provider_recorded(conn)
     skipped = 0
     count = 0
-    for point in api.list_google_data_points("exercise", *_window(start, end)):
+    held: set = set()
+    unreadable = False
+    for point in api.list_google_data_points("exercise", *_with_margin(start, end)):
         payload = point.get("exercise")
         identifier = point.get("name")
-        if not isinstance(payload, dict) or not identifier:
+        if not isinstance(identifier, str) or not identifier:
+            unreadable = True
+            continue
+        # Held even if it cannot be stored or is left to another provider:
+        # Google still has it.
+        held.add(identifier)
+        if not isinstance(payload, dict):
             continue
         interval = payload.get("interval") or {}
         day = _local_date(interval.get("startTime"), interval.get("startUtcOffset"))
@@ -892,6 +1063,20 @@ def sync_exercises(conn, start, end) -> int:
         }
         db.save_exercise(conn, identifier, row)
         count += 1
+    if unreadable:
+        logger.info("kept every stored exercises row: the answer held a point it could not read")
+    else:
+        stored = db.rows_written_by(conn, "exercises", PROVIDER, start.isoformat(), end.isoformat())
+        gone = [{"log_id": row["log_id"]} for row in stored if row["log_id"] not in held]
+        db.remove_rows(conn, "exercise_routes", gone)
+        removed = db.remove_rows(conn, "exercises", gone)
+        if removed:
+            logger.info(
+                "removed %d exercises row(s) Google no longer holds for %s to %s",
+                removed,
+                start,
+                end,
+            )
     conn.commit()
     if skipped:
         logger.info("left %d workout(s) to the provider that already recorded their day", skipped)
@@ -1022,14 +1207,22 @@ def sync_food_log(conn, start, end) -> int:
     whichever apple was logged last.
 
     The two sources are independent, so a day carrying only one of them writes
-    only that column and leaves the other as it stands.
+    only that column and leaves the other as it stands. A day a source no
+    longer answers for, its entries all deleted, has that column withdrawn,
+    and a day left with neither is removed. No import writes this table, so
+    every row this provider last wrote is Google's alone.
     """
+    skipped: list = []
+    food_days: set = set()
+    water_days: set = set()
     calories = _rollup_values(
         "nutrition-log",
         start,
         end,
         "nutritionLog",
         lambda p: _number((p.get("energy") or {}).get("kcalSum"), float),
+        skipped,
+        food_days,
     )
     water = _rollup_values(
         "hydration-log",
@@ -1037,6 +1230,8 @@ def sync_food_log(conn, start, end) -> int:
         end,
         "hydrationLog",
         lambda p: _number((p.get("amountConsumed") or {}).get("millilitersSum"), float),
+        skipped,
+        water_days,
     )
     count = 0
     for day in sorted(set(calories) | set(water)):
@@ -1046,6 +1241,16 @@ def sync_food_log(conn, start, end) -> int:
                 row[column] = source[day]
         db.save_food_log(conn, row)
         count += 1
+    _withdraw_absent(
+        conn,
+        "food_log",
+        start,
+        end,
+        {"calories_in": set(calories) | food_days, "water_ml": set(water) | water_days},
+        ("calories_in", "water_ml"),
+        db.save_food_log,
+        bool(skipped),
+    )
     conn.commit()
     return count
 
