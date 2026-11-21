@@ -6,7 +6,9 @@ model to repeat the call it just made. Each tool's own note, about what the
 data needs before any exists, is said either way.
 """
 
+import inspect
 import json
+from datetime import date
 from unittest.mock import patch
 
 import pytest
@@ -133,6 +135,29 @@ async def _empty_answer(module, name, live):
     # The flag reaches every refresh, or a live call quietly reads the cache.
     assert all(call.args[-1] is live for call in refresh.call_args_list), name
     return said
+
+
+_DATED = [
+    (module, name)
+    for module, name, _message, _note in _TOOLS
+    if {"start_date", "end_date"} <= set(inspect.signature(getattr(module, name)).parameters)
+]
+
+
+@pytest.mark.parametrize(("module", "name"), _DATED, ids=[name for _m, name in _DATED])
+async def test_every_refresh_covers_the_window_asked_for(module, name):
+    """A refresh of a narrower window reads stale days back as current."""
+    with (
+        patch.object(helpers, "GOOGLE_CLIENT_PATH") as client,
+        patch.object(helpers, "GOOGLE_TOKENS_PATH") as tokens,
+        patch.object(module, "refresh_before_query") as refresh,
+    ):
+        client.exists.return_value = True
+        tokens.exists.return_value = True
+        await getattr(module, name)(start_date="2026-03-10", end_date="2026-03-15")
+    assert refresh.called, name
+    windows = {call.args[1:3] for call in refresh.call_args_list}
+    assert windows == {(date(2026, 3, 10), date(2026, 3, 15))}, name
 
 
 @pytest.mark.parametrize(("module", "name", "message", "note"), _TOOLS, ids=_IDS)
