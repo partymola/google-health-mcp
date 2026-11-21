@@ -463,20 +463,64 @@ class TestWhatTheDailyPointsAlsoCarry:
         (row,) = getattr(db, f"query_{table}")(tmp_db, "2026-03-15", "2026-03-15")
         assert row[column] is None
 
-    def test_an_imported_skin_temperature_delta_survives_a_point_with_no_baseline(
-        self, tmp_db, stored
-    ):
-        """The delta is what an imported history holds, so it is not Google's
-        alone and a point that cannot compute one leaves it."""
-        db.save_skin_temperature(tmp_db, {"date": "2026-03-15", "nightly_relative": 0.9})
-        tmp_db.commit()
+    def test_a_revised_night_without_a_baseline_withdraws_its_delta(self, tmp_db, stored):
+        """No import writes skin temperature, so the delta is always one this sync
+        computed, and one from an earlier point would sit beside a new reading."""
+        stored(
+            google_sync.sync_skin_temperature,
+            _points(
+                "dailySleepTemperatureDerivations",
+                {"nightlyTemperatureCelsius": 33.5, "baselineTemperatureCelsius": 33.4},
+            ),
+        )
         stored(
             google_sync.sync_skin_temperature,
             _points("dailySleepTemperatureDerivations", {"nightlyTemperatureCelsius": 33.6}),
         )
         (row,) = db.query_skin_temperature(tmp_db, "2026-03-15", "2026-03-15")
-        assert row["nightly_relative"] == 0.9
+        assert row["nightly_relative"] is None
         assert row["nightly_absolute"] == 33.6
+
+    @pytest.mark.parametrize(
+        "save,handler,field,partial,query,kept",
+        [
+            (
+                db.save_hrv,
+                google_sync.sync_hrv,
+                "dailyHeartRateVariability",
+                {"entropy": 2.25},
+                "query_hrv",
+                {"daily_rmssd": 30.0, "deep_rmssd": 33.0},
+            ),
+            (
+                db.save_spo2,
+                google_sync.sync_spo2,
+                "dailyOxygenSaturation",
+                {"lowerBoundPercentage": 92.8},
+                "query_spo2",
+                {"avg": 96.0, "min": 91.0, "max": 99.0},
+            ),
+        ],
+        ids=["hrv", "spo2"],
+    )
+    def test_an_imported_measure_survives_a_point_carrying_only_googles_figures(
+        self, tmp_db, stored, save, handler, field, partial, query, kept
+    ):
+        save(tmp_db, {"date": "2026-03-15", **kept})
+        tmp_db.commit()
+        stored(handler, _points(field, partial))
+        (row,) = getattr(db, query)(tmp_db, "2026-03-15", "2026-03-15")
+        assert {column: row[column] for column in kept} == kept
+
+    def test_an_imported_hrv_row_keeps_its_deep_rmssd(self, tmp_db, stored):
+        db.save_hrv(tmp_db, {"date": "2026-03-15", "daily_rmssd": 30.0, "deep_rmssd": 33.0})
+        tmp_db.commit()
+        stored(
+            google_sync.sync_hrv,
+            _points("dailyHeartRateVariability", {"averageHeartRateVariabilityMilliseconds": 29.0}),
+        )
+        (row,) = db.query_hrv(tmp_db, "2026-03-15", "2026-03-15")
+        assert (row["daily_rmssd"], row["deep_rmssd"]) == (29.0, 33.0)
 
     def test_an_imported_spo2_pair_survives_a_point_without_bounds(self, tmp_db, stored):
         db.save_spo2(tmp_db, {"date": "2026-03-15", "avg": 96.0, "min": 91.0, "max": 99.0})

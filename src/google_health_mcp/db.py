@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS heart_rate (
     data_source TEXT
 );
 
+CREATE TABLE IF NOT EXISTS heart_rate_zones (
+    date TEXT PRIMARY KEY,
+    zone_boundaries TEXT,
+    provider TEXT
+);
+
 CREATE TABLE IF NOT EXISTS activity (
     date TEXT PRIMARY KEY,
     steps INTEGER,
@@ -257,6 +263,30 @@ CREATE TABLE IF NOT EXISTS body_fat_readings (
 
 CREATE INDEX IF NOT EXISTS idx_body_fat_readings_date ON body_fat_readings(date);
 
+CREATE TABLE IF NOT EXISTS sedentary_periods (
+    date TEXT PRIMARY KEY,
+    points TEXT,
+    provider TEXT
+);
+
+CREATE TABLE IF NOT EXISTS altitude_gains (
+    date TEXT PRIMARY KEY,
+    points TEXT,
+    provider TEXT
+);
+
+CREATE TABLE IF NOT EXISTS swim_lengths (
+    date TEXT PRIMARY KEY,
+    points TEXT,
+    provider TEXT
+);
+
+CREATE TABLE IF NOT EXISTS respiratory_rate_sleep (
+    date TEXT PRIMARY KEY,
+    points TEXT,
+    provider TEXT
+);
+
 CREATE TABLE IF NOT EXISTS authorisation (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     missing_scopes TEXT,
@@ -348,6 +378,7 @@ def get_db(db_path: Path | str | None = None) -> sqlite3.Connection:
 # The conflict target for each table an upsert writes. sync_log is append-only.
 _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "heart_rate": ("date",),
+    "heart_rate_zones": ("date",),
     "activity": ("date",),
     "exercises": ("log_id",),
     "sleep": ("date",),
@@ -368,8 +399,18 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
     "sleep_sessions": ("session_id",),
     "weight_readings": ("reading_id",),
     "body_fat_readings": ("reading_id",),
+    "sedentary_periods": ("date",),
+    "altitude_gains": ("date",),
+    "swim_lengths": ("date",),
+    "respiratory_rate_sleep": ("date",),
     "authorisation": ("id",),
 }
+
+#: Tables holding one row a local day with that day's points as Google
+#: answered them, which a re-sync of the day replaces whole.
+_DAY_LIST_TABLES = frozenset(
+    {"sedentary_periods", "altitude_gains", "swim_lengths", "respiratory_rate_sleep"}
+)
 
 #: The text column each table stores zlib-compressed, as a BLOB in a column
 #: declared TEXT: kilobytes a row, and hundreds for a route. The declaration
@@ -378,6 +419,7 @@ _UPSERT_KEYS: dict[str, tuple[str, ...]] = {
 _PACKED_COLUMNS: dict[str, str] = {
     "exercise_routes": "tcx",
     "sleep_sessions": "record",
+    **{table: "points" for table in _DAY_LIST_TABLES},
 }
 
 
@@ -442,6 +484,10 @@ def save_heart_rate_row(conn: sqlite3.Connection, row: dict):
     offer would put an empty list over whatever the previous one stored.
     """
     _upsert(conn, "heart_rate", row)
+
+
+def save_heart_rate_zones(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "heart_rate_zones", row)
 
 
 def save_activity(conn: sqlite3.Connection, row: dict):
@@ -529,6 +575,22 @@ def save_weight_reading(conn: sqlite3.Connection, row: dict):
 
 def save_body_fat_reading(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "body_fat_readings", row)
+
+
+def save_sedentary_periods(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "sedentary_periods", row)
+
+
+def save_altitude_gains(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "altitude_gains", row)
+
+
+def save_swim_lengths(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "swim_lengths", row)
+
+
+def save_respiratory_rate_sleep(conn: sqlite3.Connection, row: dict):
+    _upsert(conn, "respiratory_rate_sleep", row)
 
 
 def save_authorisation(conn: sqlite3.Connection, row: dict):
@@ -649,6 +711,7 @@ def log_sync(
 # to safely interpolate table names into SQL (SQLite doesn't support parameterised table names).
 _DATA_TABLE_MAP: dict[str, str] = {
     "heart_rate": "heart_rate",
+    "heart_rate_zones": "heart_rate_zones",
     "activity": "activity",
     "exercises": "exercises",
     "sleep": "sleep",
@@ -668,6 +731,10 @@ _DATA_TABLE_MAP: dict[str, str] = {
     "sleep_sessions": "sleep_sessions",
     "weight_readings": "weight_readings",
     "body_fat_readings": "body_fat_readings",
+    "sedentary_periods": "sedentary_periods",
+    "altitude_gains": "altitude_gains",
+    "swim_lengths": "swim_lengths",
+    "respiratory_rate_sleep": "respiratory_rate_sleep",
 }
 
 
@@ -741,6 +808,7 @@ _JSON_COLUMNS = frozenset(
         "exercise_events",
         "splits",
         "split_summaries",
+        "zone_boundaries",
     }
 )
 
@@ -748,6 +816,14 @@ _JSON_COLUMNS = frozenset(
 def query_heart_rate(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM heart_rate WHERE date >= ? AND date <= ? ORDER BY date",
+        (start_date, end_date),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def query_heart_rate_zones(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM heart_rate_zones WHERE date >= ? AND date <= ? ORDER BY date",
         (start_date, end_date),
     ).fetchall()
     return _rows_to_dicts(rows)
@@ -980,6 +1056,24 @@ def _query_readings(conn: sqlite3.Connection, table: str, start_date: str, end_d
         reading["record"] = _decoded(reading["record"])
         readings.append(reading)
     return readings
+
+
+def query_day_lists(
+    conn: sqlite3.Connection, table: str, start_date: str, end_date: str
+) -> list[dict]:
+    """Each day in a date range from one of the day-list tables, its points decoded."""
+    if table not in _DAY_LIST_TABLES:
+        raise ValueError(f"{table} is not a day-list table")
+    rows = conn.execute(
+        f"SELECT * FROM {table} WHERE date >= ? AND date <= ? ORDER BY date",
+        (start_date, end_date),
+    ).fetchall()
+    days = []
+    for row in rows:
+        day = dict(row)
+        day["points"] = _decoded(_unpacked(day["points"]))
+        days.append(day)
+    return days
 
 
 def query_weight_readings(conn: sqlite3.Connection, start_date: str, end_date: str) -> list[dict]:

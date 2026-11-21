@@ -137,8 +137,8 @@ def sync_heart_rate(conn, start, end) -> int:
 
     Written through the upsert rather than through `save_heart_rate`, which
     always names `zones`: that helper would put an empty list over whatever
-    zones the day already holds. Zones are stitched from three separate data
-    types and are not here yet.
+    zones the day already holds. `zones` is an import's time in each zone;
+    Google's zone boundaries are another quantity, in `heart_rate_zones`.
     """
     count = 0
     for row in _daily_rows(
@@ -155,6 +155,39 @@ def sync_heart_rate(conn, start, end) -> int:
         qualifiers=_HEART_RATE_QUALIFIERS,
     ):
         db.save_heart_rate_row(conn, row)
+        count += 1
+    conn.commit()
+    return count
+
+
+def sync_heart_rate_zones(conn, start, end) -> int:
+    """The four zone boundaries Google reports for each day, as sent.
+
+    Read from Google's merged stream. Where Google holds two zone records for
+    a day, a per-source list answers every date in the request twice, with
+    differing zones and no telling which is right; the merged stream answers
+    each date once, and matched a single-day list request on every date
+    checked. On the two days measured holding two records, nothing showed
+    which of them it picks is right. It carries no `dataSource`. A day the
+    answer still carries twice is stored as the later point, as the upsert
+    does for every daily type. Asked for exactly the range given, with no
+    margin: a day's zones are one record rather than intervals an edge can
+    cut, and every point is stored under the date it carries.
+    """
+    count = 0
+    points = api.list_google_data_points(
+        "daily-heart-rate-zones", *_window(start, end), view="reconcile"
+    )
+    for point in points:
+        payload = point.get("dailyHeartRateZones")
+        if not isinstance(payload, dict):
+            continue
+        day, zones = _date(payload), payload.get("heartRateZones")
+        if day is None or not isinstance(zones, list) or not zones:
+            continue
+        db.save_heart_rate_zones(
+            conn, {"date": day, "zone_boundaries": json.dumps(zones), "provider": PROVIDER}
+        )
         count += 1
     conn.commit()
     return count
@@ -228,12 +261,12 @@ def sync_breathing_rate(conn, start, end) -> int:
 def sync_skin_temperature(conn, start, end) -> int:
     """Nightly skin temperature, as a delta and as the two absolutes.
 
-    `nightly_relative` is the delta from the personal baseline, which is the
-    quantity an imported row holds; Google reports the two absolutes instead,
-    so one subtraction keeps the column meaning one thing. Both absolutes are
-    stored beside it because they are strictly more information. Without a
-    baseline there is no delta - and no delta is not a drift of zero. The
-    delta is left out of `google_only`, since an imported history holds it.
+    `nightly_relative` is the delta from the personal baseline; Google reports
+    the two absolutes instead, so one subtraction keeps the column meaning one
+    thing. Both absolutes are stored beside it because they are strictly more
+    information. Without a baseline there is no delta, and no delta is not a
+    drift of zero. No import writes this table, so every column is Google's
+    and a revision withdraws it.
     """
 
     def build(payload):
@@ -256,7 +289,9 @@ def sync_skin_temperature(conn, start, end) -> int:
         end,
         "dailySleepTemperatureDerivations",
         build,
-        google_only=frozenset({"nightly_absolute", "baseline", "nightly_stddev_30d"}),
+        google_only=frozenset(
+            {"nightly_absolute", "baseline", "nightly_relative", "nightly_stddev_30d"}
+        ),
     ):
         db.save_skin_temperature(conn, row)
         count += 1
@@ -622,6 +657,95 @@ def sync_body_fat_readings(conn, start, end) -> int:
     """Every body-fat reading, where the daily `weight` row keeps one a day."""
     points = api.list_google_data_points("body-fat", *_window(start, end))
     return _store_readings(conn, points, "bodyFat", db.save_body_fat_reading)
+
+
+def _interval_day(payload: dict) -> str | None:
+    """The civil date an interval starts on, which is what its list filter reads."""
+    interval = payload.get("interval")
+    civil = interval.get("civilStartTime") if isinstance(interval, dict) else None
+    return _date(civil) if isinstance(civil, dict) else None
+
+
+def _with_margin(start, end):
+    """The window to ask for when storing [start, end] a day at a time.
+
+    A day of margin either side, so neither day asked for sits at the edge of
+    the request, where a merged stream could answer it in part.
+    """
+    return max(start, date.min + timedelta(days=1)) - timedelta(days=1), end + timedelta(days=2)
+
+
+def _store_day_lists(conn, points, field: str, day_of, save, start, end) -> int:
+    """Each local day in [start, end] the answer holds, stored as its points as sent.
+
+    For types whose points carry no usable name, and whose intervals Google
+    may revise after first sending them: no per-point key survives that, so
+    the day is the row and a re-sync of it replaces the day's points. A row is
+    written only for a day the answer holds, from an answer paged to
+    exhaustion, so no row is ever removed. Days outside [start, end] are the
+    request's margin and are left alone. The fetch stays in each handler,
+    where the scope check can read its data type. Returns the days written.
+    """
+    first, last = start.isoformat(), end.isoformat()
+    days: dict[str, list] = {}
+    for point in points:
+        payload = point.get(field)
+        if not isinstance(payload, dict):
+            continue
+        day = day_of(payload)
+        if day is None or not first <= day <= last:
+            continue
+        days.setdefault(day, []).append(point)
+    for day, held in days.items():
+        save(conn, {"date": day, "points": json.dumps(held), "provider": PROVIDER})
+    conn.commit()
+    return len(days)
+
+
+def sync_sedentary_periods(conn, start, end) -> int:
+    """Sedentary periods, from Google's merged stream: phone tracking can write them too."""
+    points = api.list_google_data_points(
+        "sedentary-period", *_with_margin(start, end), view="reconcile"
+    )
+    return _store_day_lists(
+        conn, points, "sedentaryPeriod", _interval_day, db.save_sedentary_periods, start, end
+    )
+
+
+def sync_altitude_gains(conn, start, end) -> int:
+    """Altitude gained per interval. Google counts altitude among its true zeros."""
+    points = api.list_google_data_points("altitude", *_with_margin(start, end))
+    return _store_day_lists(
+        conn, points, "altitude", _interval_day, db.save_altitude_gains, start, end
+    )
+
+
+def sync_swim_lengths(conn, start, end) -> int:
+    """Lengths the watch detected passively, which need not belong to a swim workout."""
+    points = api.list_google_data_points("swim-lengths-data", *_with_margin(start, end))
+    return _store_day_lists(
+        conn, points, "swimLengthsData", _interval_day, db.save_swim_lengths, start, end
+    )
+
+
+def sync_respiratory_rate_sleep(conn, start, end) -> int:
+    """Breathing rate by sleep stage, every summary a night carries.
+
+    Each point's `name` has an empty data-point id, so every summary shares
+    one: a key on it would hold a single row. Dated by the sample's civil time.
+    """
+    points = api.list_google_data_points(
+        "respiratory-rate-sleep-summary", *_with_margin(start, end)
+    )
+    return _store_day_lists(
+        conn,
+        points,
+        "respiratoryRateSleepSummary",
+        lambda payload: _civil(payload)[0],
+        db.save_respiratory_rate_sleep,
+        start,
+        end,
+    )
 
 
 def sync_core_temperature(conn, start, end) -> int:
@@ -1039,6 +1163,7 @@ def sync_exercise_routes(conn, start, end) -> int:
 #: copy of the database without the loop knowing anything about providers.
 GOOGLE_SYNC_HANDLERS = {
     "heart_rate": sync_heart_rate,
+    "heart_rate_zones": sync_heart_rate_zones,
     "spo2": sync_spo2,
     "hrv": sync_hrv,
     "breathing_rate": sync_breathing_rate,
@@ -1059,6 +1184,10 @@ GOOGLE_SYNC_HANDLERS = {
     "sleep_sessions": sync_sleep_sessions,
     "weight_readings": sync_weight_readings,
     "body_fat_readings": sync_body_fat_readings,
+    "sedentary_periods": sync_sedentary_periods,
+    "altitude_gains": sync_altitude_gains,
+    "swim_lengths": sync_swim_lengths,
+    "respiratory_rate_sleep": sync_respiratory_rate_sleep,
 }
 
 _METRICS = ("health_metrics_and_measurements",)
@@ -1069,6 +1198,7 @@ _ACTIVITY = ("activity_and_fitness",)
 #: consents again. `account` gates its records one by one instead.
 HANDLER_SCOPES = {
     "heart_rate": _METRICS,
+    "heart_rate_zones": _METRICS,
     "spo2": _METRICS,
     "hrv": _METRICS,
     "breathing_rate": _METRICS,
@@ -1089,4 +1219,8 @@ HANDLER_SCOPES = {
     "sleep_sessions": ("sleep",),
     "weight_readings": _METRICS,
     "body_fat_readings": _METRICS,
+    "sedentary_periods": _ACTIVITY,
+    "altitude_gains": _ACTIVITY,
+    "swim_lengths": _ACTIVITY,
+    "respiratory_rate_sleep": _METRICS,
 }

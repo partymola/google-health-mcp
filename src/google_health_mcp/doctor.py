@@ -751,6 +751,12 @@ _USER_LOGGED_TYPES = frozenset(
     }
 )
 
+#: Device series whose gaps are ordinary rather than a sign of a stop:
+#: altitude is recorded only on days with a climb, and swim lengths are lengths
+#: the watch detects passively, which a firmware change could end with nothing
+#: broken.
+_UNJUDGED_DEVICE_TYPES = frozenset({"altitude_gains", "swim_lengths"})
+
 
 def _never_filled_types(conn: sqlite3.Connection) -> set[str]:
     """Types no successful sync has ever recorded a row for.
@@ -851,7 +857,7 @@ def _check_stopped_series(conn: sqlite3.Connection, newest: dict[str, str]) -> l
 
     findings = []
     for data_type in sorted(newest):
-        if data_type in _USER_LOGGED_TYPES:
+        if data_type in _USER_LOGGED_TYPES | _UNJUDGED_DEVICE_TYPES:
             continue
         if _days_with_rows(conn, data_type, recent_first, reference):
             continue

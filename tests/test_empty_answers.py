@@ -32,6 +32,12 @@ from google_health_mcp.tools import (
 #: a re-fetch. food_log is not here: its note never offered one.
 _TOOLS = [
     (activity_tools, "health_get_activity", "No activity data found for this period.", None),
+    (
+        activity_tools,
+        "health_get_activity_events",
+        "No activity events found for this period.",
+        None,
+    ),
     (azm_tools, "health_get_azm", "No AZM data found for this period.", None),
     (
         breathing_rate_tools,
@@ -47,6 +53,12 @@ _TOOLS = [
     ),
     (exercise_tools, "health_get_exercises", "No exercise entries found for this period.", None),
     (heart_tools, "health_get_heart_rate", "No heart rate data found for this period.", None),
+    (
+        heart_tools,
+        "health_get_heart_rate_zones",
+        "No heart rate zones found for this period.",
+        None,
+    ),
     (hrv_tools, "health_get_hrv", "No HRV data found for this period.", None),
     (
         rhythm_tools,
@@ -118,6 +130,8 @@ async def _empty_answer(module, name, live):
         tokens.exists.return_value = True
         said = json.loads(await getattr(module, name)(live=live))
     assert refresh.called, "the tool never reached its refresh, so this proves nothing"
+    # The flag reaches every refresh, or a live call quietly reads the cache.
+    assert all(call.args[-1] is live for call in refresh.call_args_list), name
     return said
 
 

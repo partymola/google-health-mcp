@@ -32,6 +32,7 @@ async def health_get_heart_rate(
     platform Google says recorded it).
     Zone data: name, minutes, caloriesOut, max/min HR for each zone. Zones are
     present only on days that arrived by import; a sync does not write them.
+    Google's own zone boundaries are in health_get_heart_rate_zones.
     """
     start, end = parse_date(start_date, end_date, default_days=30)
 
@@ -50,3 +51,48 @@ async def health_get_heart_rate(
         return empty_answer("No heart rate data found for this period.", live)
 
     return format_response({"heart_rate": entries, "count": len(entries)})
+
+
+@mcp.tool(structured_output=False)
+@require_auth
+async def health_get_heart_rate_zones(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    live: bool = False,
+) -> str:
+    """Get Google's daily heart-rate zone boundaries.
+
+    Each day's four zones (LIGHT, MODERATE, VIGOROUS, PEAK) with the minimum
+    and maximum beats per minute of each, as Google reports them. Boundaries
+    only: time spent in each zone is not part of this. health_get_heart_rate
+    carries an import's zones, with minutes, on days that arrived that way.
+
+    Args:
+        start_date: Start date as "YYYY-MM-DD", "YYYY-MM", or "30d". Default: 30
+            days back from the end date or today, whichever is earlier.
+        end_date: End date as "YYYY-MM-DD", "YYYY-MM" (its last day), or "Nd".
+            Default: today.
+        live: If true, re-fetch this window from the API before reading the cache.
+
+    Returns one entry per day with zone_boundaries (the list as Google sent
+    it, the bounds as strings).
+    """
+    start, end = parse_date(start_date, end_date, default_days=30)
+
+    await anyio.to_thread.run_sync(
+        lambda: refresh_before_query("heart_rate_zones", start, end, live)
+    )
+
+    def _query():
+        conn = db.get_db()
+        try:
+            return db.query_heart_rate_zones(conn, start.isoformat(), end.isoformat())
+        finally:
+            conn.close()
+
+    entries = await anyio.to_thread.run_sync(_query)
+
+    if not entries:
+        return empty_answer("No heart rate zones found for this period.", live)
+
+    return format_response({"heart_rate_zones": entries, "count": len(entries)})

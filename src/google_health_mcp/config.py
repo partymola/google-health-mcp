@@ -54,12 +54,17 @@ GOOGLE_SCOPE_READERS: dict[str, tuple[str, ...]] = {
         "active-zone-minutes",
         "exercise",
         "daily-vo2-max",
+        "sedentary-period",
+        "altitude",
+        "swim-lengths-data",
     ),
     "health_metrics_and_measurements": (
         "daily-resting-heart-rate",
+        "daily-heart-rate-zones",
         "daily-heart-rate-variability",
         "daily-oxygen-saturation",
         "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary",
         "daily-sleep-temperature-derivations",
         "weight",
         "body-fat",
@@ -126,9 +131,11 @@ ACCESS_TOKEN_REFRESH_BUFFER = 300
 # It does NOT drive the sync: both `all` expansions read the handler map, so
 # the order here is the order the help text prints, not the order a sync runs.
 # Trends and compare validate against `_TREND_FNS`, which is deliberately
-# narrower: episodes and per-reading records have no daily series.
+# narrower: episodes and records, one reading or one day's list each, have no
+# daily series.
 CACHED_DATA_TYPES = (
     "heart_rate",
+    "heart_rate_zones",
     "activity",
     "exercises",
     "sleep",
@@ -149,4 +156,8 @@ CACHED_DATA_TYPES = (
     "sleep_sessions",
     "weight_readings",
     "body_fat_readings",
+    "sedentary_periods",
+    "altitude_gains",
+    "swim_lengths",
+    "respiratory_rate_sleep",
 )

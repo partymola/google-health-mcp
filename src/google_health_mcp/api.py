@@ -9,8 +9,8 @@ that succeeds while every page parses to nothing.
 
 Quotas are per user: 300 requests a minute for a verified app, and 2.5 a
 second for an unverified one - which is every install of this, since the
-100-user cap makes verification unnecessary. Measured against that: a
-multi-year backfill of every type is around 250 requests.
+100-user cap makes verification unnecessary. Against that, a multi-year
+backfill of every type is a few hundred requests.
 """
 
 import http.client
@@ -182,7 +182,7 @@ def _rollup_only(path: str, field: str, cap_days: int) -> GoogleType:
 #: Every data type this package can read. Keyed by the request path, which is
 #: the API's own identity for a type.
 #:
-#: Wider than what the sync uses: a dozen entries here are catalogued rather
+#: Wider than what the sync uses: some entries here are catalogued rather
 #: than read, either superseded by a `daily-*` twin or measured and rejected
 #: (`activity-level`, whose reasons are in `google_sync.sync_activity`). A
 #: type appearing here is not evidence that anything fetches it - the handler
@@ -202,6 +202,8 @@ GOOGLE_TYPES: dict[str, GoogleType] = {
         _interval("active-minutes", "activeMinutes", rollup_cap_days=14),
         _interval("activity-level", "activityLevel"),
         _interval("sedentary-period", "sedentaryPeriod"),
+        _interval("altitude", "altitude"),
+        _interval("swim-lengths-data", "swimLengthsData"),
         _interval("active-energy-burned", "activeEnergyBurned"),
         _interval("basal-energy-burned", "basalEnergyBurned"),
         _sample("heart-rate", "heartRate", rollup_cap_days=14),
@@ -209,6 +211,7 @@ GOOGLE_TYPES: dict[str, GoogleType] = {
         _interval("time-in-heart-rate-zone", "timeInHeartRateZone"),
         _sample("heart-rate-variability", "heartRateVariability"),
         _sample("oxygen-saturation", "oxygenSaturation"),
+        _sample("respiratory-rate-sleep-summary", "respiratoryRateSleepSummary"),
         _daily("daily-resting-heart-rate", "dailyRestingHeartRate"),
         _daily("daily-heart-rate-zones", "dailyHeartRateZones"),
         _daily("daily-heart-rate-variability", "dailyHeartRateVariability"),
@@ -391,7 +394,14 @@ class GoogleGatewayTimeout(HealthAPIError):
     """
 
 
-def list_google_data_points(data_type: str, start: date, end: date) -> list[dict]:
+#: The two read methods that page like a list: `list` is the per-source
+#: stream, `reconcile` Google's merge of the sources.
+_VIEWS = {"list": "dataPoints", "reconcile": "dataPoints:reconcile"}
+
+
+def list_google_data_points(
+    data_type: str, start: date, end: date, view: str = "list"
+) -> list[dict]:
     """Every data point of one type in [start, end), following pages to exhaustion.
 
     An empty page carrying a `nextPageToken` is not an empty window: Google
@@ -402,12 +412,17 @@ def list_google_data_points(data_type: str, start: date, end: date) -> list[dict
     token: one may only be replayed with every other field unchanged, and it
     carries no documented lifetime. Within a single walk a token is replayed,
     which is why a 504 restarts rather than shrinking the page under one.
+
+    `view` is "list", each source's own points, or "reconcile", Google's merge
+    of the sources.
     """
     spec = GOOGLE_TYPES.get(data_type)
     if spec is None:
         raise ValueError(f"{data_type} is not a data type this package reads")
     if not spec.listable:
         raise ValueError(f"{data_type} cannot be listed; read it with daily_roll_up")
+    if view not in _VIEWS:
+        raise ValueError(f"{view} is not a way to list data points")
     if start >= end:
         # Measured: an empty closed-open window is refused with "Invalid data
         # point filter: INVALID_TIME_RANGE", not answered with no points. An
@@ -415,6 +430,7 @@ def list_google_data_points(data_type: str, start: date, end: date) -> list[dict
         # date, so asking would turn a no-op into an error row every run.
         return []
 
+    method = _VIEWS[view]
     points: list[dict] = []
     page_size = spec.page_size
     token = None
@@ -429,7 +445,7 @@ def list_google_data_points(data_type: str, start: date, end: date) -> list[dict
         if time.monotonic() > deadline:
             raise HealthAPIError(f"gave up walking {data_type} after {GOOGLE_WALK_DEADLINE}s")
         try:
-            body = google_get(f"users/me/dataTypes/{spec.path}/dataPoints", params)
+            body = google_get(f"users/me/dataTypes/{spec.path}/{method}", params)
         except GoogleGatewayTimeout:
             if page_size <= 1:
                 raise HealthAPIError("Google timed out even on a single-item page") from None
@@ -465,6 +481,7 @@ _NO_DAILY_ROLLUP = frozenset(
         "activity-level",
         "heart-rate-variability",
         "oxygen-saturation",
+        "respiratory-rate-sleep-summary",
         "vo2-max",
         "daily-vo2-max",
         "daily-resting-heart-rate",

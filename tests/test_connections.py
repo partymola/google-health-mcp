@@ -33,12 +33,14 @@ from google_health_mcp.tools import (
 #: health_trends is pinned in tests/test_analysis.py.
 _TOOLS = [
     (activity_tools, "health_get_activity", "query_activity"),
+    (activity_tools, "health_get_activity_events", "query_day_lists"),
     (azm_tools, "health_get_azm", "query_azm"),
     (breathing_rate_tools, "health_get_breathing_rate", "query_breathing_rate"),
     (cardio_fitness_tools, "health_get_cardio_fitness", "query_cardio_fitness"),
     (exercise_tools, "health_get_exercises", "query_exercises"),
     (food_tools, "health_get_food_log", "query_food_log"),
     (heart_tools, "health_get_heart_rate", "query_heart_rate"),
+    (heart_tools, "health_get_heart_rate_zones", "query_heart_rate_zones"),
     (hrv_tools, "health_get_hrv", "query_hrv"),
     (rhythm_tools, "health_get_ecg", "query_ecg"),
     (rhythm_tools, "health_get_irregular_rhythm", "query_irn"),

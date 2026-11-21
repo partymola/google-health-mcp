@@ -220,7 +220,7 @@ def _run_sync_types(conn, data_types, results, since_date, until_date, today, da
         try:
             packed = db.compact(conn)
             if packed:
-                logger.info("Compressed %d stored route(s) and sleep session(s)", packed)
+                logger.info("Compressed %d stored value(s)", packed)
         except Exception as e:
             logger.warning("Could not compact the cache: %s", type(e).__name__)
     return results
@@ -300,12 +300,14 @@ async def health_sync(
     entry in each table. First sync fetches the specified number of days.
 
     Args:
-        data_types: What to sync. Options: "all", "heart_rate", "activity",
-            "exercises", "sleep", "weight", "spo2", "hrv", "azm",
+        data_types: What to sync. Options: "all", "heart_rate",
+            "heart_rate_zones", "activity", "exercises", "sleep", "weight",
+            "spo2", "hrv", "azm",
             "breathing_rate", "skin_temperature", "core_temperature",
             "cardio_fitness", "food_log", "ecg", "irn", "account", "height",
             "exercise_routes", "sleep_sessions", "weight_readings",
-            "body_fat_readings".
+            "body_fat_readings", "sedentary_periods", "altitude_gains",
+            "swim_lengths", "respiratory_rate_sleep".
             Comma-separated for multiple, e.g. "sleep,hrv". Default: "all".
         days: Days of history for first sync (default: 30). Ignored
             on subsequent syncs (uses last synced date).
@@ -317,7 +319,9 @@ async def health_sync(
             use to repair a gap in the middle of the cache without re-pulling
             everything from the gap to today.
 
-    Returns summary of records synced per data type.
+    Returns summary of records synced per data type; for the day-at-a-time
+    types (sedentary_periods, altitude_gains, swim_lengths,
+    respiratory_rate_sleep) the count is of days.
     Not for querying data - use health_get_heart_rate, health_get_activity,
     health_get_sleep, etc. instead.
     """

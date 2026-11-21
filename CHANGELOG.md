@@ -5,12 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## Unreleased - 1.13.0
 
-### Fixed
+This release adds heart-rate zones, sedentary periods, altitude, swim lengths and breathing by sleep stage. Revised HRV, SpO2 and skin temperature days are also kept tidier.
 
-- VO2 max is read under the activity and fitness permission, which is where Google now lists it.
-- When Google revises a day's HRV, SpO2 or skin temperature, the figures it sends only alongside them (HRV entropy and non-REM rate, the SpO2 bounds and spread, the skin temperature readings, baseline and spread) now follow the revision. A figure the revised day no longer carries is cleared rather than left beside it. Imported history is untouched.
+### New data to ask for
+
+- `health_get_heart_rate_zones` returns Google's four heart-rate zones for each day. Each zone has its lowest and highest heart rate.
+- `health_get_activity_events` returns each sedentary period, altitude gain and swim length. You get its start, end and values, or the whole record with `include_records`. It covers the last 7 days unless you ask for more.
+- Swim lengths are the ones your watch notices on its own. They can appear on days without a swim workout.
+- `health_get_breathing_rate` takes `include_sleep_summaries`. It adds your breathing rate for the whole night and for deep, light and REM sleep.
+
+### Steadier daily figures
+
+- Some figures arrive only with Google's own readings: HRV entropy and non-REM heart rate, the SpO2 bounds and spread, and every skin temperature figure. When Google revises such a day, these follow the revision. A figure the revised day lacks is cleared, not left behind. Imported history is untouched.
+- VO2 max is read under the activity and fitness permission, where Google's data-type reference lists it.
+
+### After upgrading
+
+- On a multi-host setup, upgrade the syncing host first and let it sync once. This release adds tables, and the first host to open the cache creates them. A cache-only host doing that would write to the shared file.
+- A first sync of the new data covers the last 30 days. For older history, run `google-health-mcp sync --types heart_rate_zones,sedentary_periods,altitude_gains,swim_lengths,respiratory_rate_sleep --since <date>`.
+- `sync --types` and `health_sync` accept those five new names.
 
 ## 1.12.0 - 2026-11-06
 

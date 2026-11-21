@@ -26,7 +26,9 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 | Tool | Data |
 |------|------|
 | `health_get_heart_rate` | Resting heart rate |
+| `health_get_heart_rate_zones` | Google's daily heart-rate zone boundaries |
 | `health_get_activity` | Steps, calories, distance, floors |
+| `health_get_activity_events` | Each sedentary period, altitude gain and swim length: its start, end and values |
 | `health_get_exercises` | Workouts: name, duration, heart rate, calories, Google's metrics summary, and splits on request |
 | `health_get_exercise_route` | One workout's GPS route, as the TCX file Google exports |
 | `health_get_sleep` | Duration, stages, sleep period |
@@ -37,7 +39,7 @@ Designed for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and o
 | `health_get_spo2` | Nightly blood oxygen saturation |
 | `health_get_hrv` | Heart rate variability (RMSSD) |
 | `health_get_azm` | Active zone minutes, with the per-zone breakdown |
-| `health_get_breathing_rate` | Nightly breaths per minute |
+| `health_get_breathing_rate` | Nightly breaths per minute, and by sleep stage on request |
 | `health_get_skin_temperature` | Nightly variation from your baseline, and the absolutes behind it |
 | `health_get_core_temperature` | Body temperature readings you logged by hand |
 | `health_get_cardio_fitness` | VO2 max, where the device reports it |
@@ -94,7 +96,7 @@ cp ~/Downloads/client_secret_*.json ~/.config/google-health-mcp/google_client.js
 google-health-mcp auth
 ```
 
-Your browser will warn that **Google hasn't verified this app**. That is expected, and the app is your own: most of these health scopes are classified restricted, and verification only matters above 100 users. Click **Advanced**, then **Go to google-health-mcp (unsafe)**, and grant the scopes.
+Your browser will warn that **Google hasn't verified this app**. That is expected, and the app is your own. Most of these health scopes are classified restricted, and verification only matters above 100 users. Click **Advanced**, then **Go to google-health-mcp (unsafe)**, and grant the scopes.
 
 If you have more than one Google account, pick the one your health data is in. `auth` checks the account once the tokens are saved, and if Google reports it is not linked to Google Health, it says so and exits 1; run it again and choose the other account.
 
@@ -170,11 +172,13 @@ google-health-mcp doctor         Check the setup and report what needs fixing
 google-health-mcp sync           Sync data to the local cache
   --days N              Days of history for a first sync (default: 30)
   --types TYPE,...      Data types to sync (default: all). One or more of:
-                        heart_rate, activity, exercises, sleep, weight, spo2,
-                        hrv, azm, breathing_rate, skin_temperature,
+                        heart_rate, heart_rate_zones, activity, exercises,
+                        sleep, weight, spo2, hrv, azm, breathing_rate,
+                        skin_temperature,
                         core_temperature, cardio_fitness, food_log, ecg, irn,
                         account, height, exercise_routes, sleep_sessions,
-                        weight_readings, body_fat_readings
+                        weight_readings, body_fat_readings, sedentary_periods,
+                        altitude_gains, swim_lengths, respiratory_rate_sleep
   --since YYYY-MM-DD    Fetch from this date, ignoring the incremental cursor
   --until YYYY-MM-DD    Inclusive end date for a --since window; together they
                         re-fetch exactly that window, to repair a gap in the
@@ -189,7 +193,7 @@ Query tools sync on the first query of each day per data type, then read the cac
 
 All query tools except `health_get_devices`, `health_get_lifetime_stats`, `health_get_profile` and `health_get_exercise_route` accept:
 
-- `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: 30 days back from the end date or today, whichever is earlier, except `health_get_height`, which goes back ten years.
+- `start_date` - `YYYY-MM-DD`, `YYYY-MM`, or `30d` (relative). Default: 30 days back from the end date or today, whichever is earlier. `health_get_height` goes back ten years instead, and `health_get_activity_events` 7 days.
 - `end_date` - `YYYY-MM-DD`, `YYYY-MM` (its last day), or `30d`. Default: today.
 - `live` - if true, re-fetch this window from the API before reading the cache. A failed refresh is reported rather than silently answered from the cache.
 
@@ -198,6 +202,10 @@ A start after the end, or a date of the right shape that does not exist, such as
 `health_get_profile` takes only `live`.
 
 `health_get_exercises` also takes `exercise_type`, a case-insensitive substring match on the workout name. Google names the workouts, so a value matching no workout name in your cache is refused with the cached names listed and the `live=True` hint, rather than answered as a period you did not train in. It also takes `include_detail`: without it each workout carries how many exercise events, splits and split summaries it has, rather than every one. `health_get_ecg` also takes `include_waveform`: a trace is thousands of voltages, so the default response carries the classification, average rate, duration and a sample count instead. `health_get_sleep_sessions` also takes `include_stages`, for the same reason: without it each session carries how many stage segments, short awakenings and out-of-bed segments it has, rather than every one.
+
+`health_get_breathing_rate` also takes `include_sleep_summaries`, which adds Google's breathing-rate summaries by sleep stage. A night can carry several, each with its own sample time.
+
+`health_get_activity_events` defaults to the last 7 days rather than 30, since a day can hold dozens of sedentary periods. It returns each event's start, end and values; `include_records` returns each one exactly as Google sent it instead.
 
 `health_get_exercise_route` takes a workout's `log_id`. The route text comes back only with `include_tcx`, since it can run to hundreds of kilobytes. Only workouts recorded with GPS have a route, and a sync fetches routes for the workouts in its own window, so an older one needs `health_sync` with `data_types="exercise_routes"` and `since`. A route holds every position you recorded, start and end included: it is cached on disk like the rest, and reaches the model only when `include_tcx` is set.
 
@@ -211,9 +219,11 @@ A start after the end, or a date of the right shape that does not exist, such as
 
 **A sync adds and corrects, and never removes.** An entry deleted in the app it was logged in simply stops appearing in the API, with nothing to say it was deleted, so a re-sync of that window leaves the cached row as it was. The API offers no tombstone, no change feed and no modified-since filter, so there is nothing to detect it by. In practice this reaches only the types you fill in by hand, since a device series is not deleted after the fact. Re-creating the cache is the way to clear one.
 
+Sedentary periods, altitude gains, swim lengths and the sleep-stage breathing summaries are kept a day at a time. A re-sync replaces each day's events with what Google sends now. A day Google sends nothing for keeps what it had.
+
 ### health_trends
 
-- `data_type` - any cached type with a daily series; ECG readings and rhythm alerts are episodes, and sleep sessions and individual readings are records, so they have no trend. Default: `activity`.
+- `data_type` - any cached type with a daily series. ECG readings and rhythm alerts are episodes, so they have no trend. Nor do the records: sleep sessions, individual readings, heart-rate zones and the day-at-a-time events. Default: `activity`.
 - `period` - `weekly`, `monthly`, `quarterly`. Default: `monthly`.
 - `start_date` / `end_date` - default: 365 days back from the end date or today, whichever is earlier.
 - `compare` - two periods, e.g. `last_30d vs previous_30d`, `2026-03 vs 2026-02`, `2026-Q1 vs 2025-Q4`. When set, `period`, `start_date` and `end_date` are ignored. A period that names no dates, such as `2026-13` or `last_0d`, is refused.
@@ -224,8 +234,8 @@ Tick these read-only scopes on the Data Access page. All are under `https://www.
 
 | Scope | Data accessed |
 |-------|--------------|
-| `activity_and_fitness.readonly` | Steps, distance, floors, calories, workouts, active zone minutes, VO2 max |
-| `health_metrics_and_measurements.readonly` | Heart rate, HRV, SpO2, breathing rate, weight, body fat, height, temperature |
+| `activity_and_fitness.readonly` | Steps, distance, floors, calories, workouts, active zone minutes, VO2 max, sedentary periods, altitude, swim lengths |
+| `health_metrics_and_measurements.readonly` | Heart rate and its zones, HRV, SpO2, breathing rate overall and by sleep stage, weight, body fat, height, temperature |
 | `sleep.readonly` | Sleep sessions and stages |
 | `nutrition.readonly` | Food and water logs |
 | `ecg.readonly` | Electrocardiograms |
@@ -261,7 +271,7 @@ Typical uses:
 
 ## Rate limits
 
-Google applies a per-user request quota, documented at [developers.google.com/health/rate-limits](https://developers.google.com/health/rate-limits). Ordinary syncing is nowhere near it: a day's update is a handful of requests, and a measured three-year backfill of every data type was around 250. If a sync is cut short, that data type is recorded as a partial sync and the next run resumes from its cursor rather than starting over.
+Google applies a per-user request quota, documented at [developers.google.com/health/rate-limits](https://developers.google.com/health/rate-limits). Ordinary syncing is nowhere near it: a day's update is a handful of requests, and a three-year backfill of every data type is a few hundred. If a sync is cut short, that data type is recorded as a partial sync and the next run resumes from its cursor rather than starting over.
 
 Querying from the cache - the default - costs no quota at all.
 
@@ -269,21 +279,21 @@ Querying from the cache - the default - costs no quota at all.
 
 This server keeps your health data on your machine. It has no backend, sends nothing anywhere, and talks only to Google's API with your own credentials.
 
-What happens to a tool's reply is up to your MCP client. With a hosted model, Claude Code included, the data a tool returns goes to that model's provider. To keep everything on your machine, use a local model.
+What happens to a tool's reply is up to your MCP client. A client using a hosted model, such as Claude Code, sends the data a tool returns to that model's provider. To keep everything on your machine, use a local model.
 
 The token file and the cache are not encrypted by this server. Keep them on an encrypted disk, such as one using LUKS, FileVault or BitLocker.
 
 This server is not a medical device. Do not rely on it, or on a model reading from it, for a diagnosis or a treatment decision.
 
-The use of information received from Google Health API will adhere to the [Google Health API Developer and User Data Policy](https://developers.google.com/health/policies/health-api-developer-user-data-policy), including the Limited Use requirements.
+This server is written to follow the [Google Health API Developer and User Data Policy](https://developers.google.com/health/policies/health-api-developer-user-data-policy), including its Limited Use requirements.
 
 ### Removing your data
 
 - Delete the cache: `~/.local/share/google-health-mcp/google_health.db`, or the file `GOOGLE_HEALTH_MCP_DB_PATH` names.
-- Delete the tokens: `~/.config/google-health-mcp/google_tokens.json`.
+- Delete the tokens: `~/.config/google-health-mcp/google_tokens.json`, or the one in the directory `GOOGLE_HEALTH_MCP_CONFIG_DIR` names.
 - Remove the app's access to your Google account at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 
-Removing access does not delete the cache, and deleting the cache does not remove access.
+Removing access does not delete the cache, and deleting the cache does not remove access. Neither removes the replies your MCP client or its model provider already holds.
 
 ### Contributing safely
 
