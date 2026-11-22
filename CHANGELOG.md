@@ -7,32 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased - 1.13.0
 
-This release adds heart-rate zones, sedentary periods, altitude, swim lengths and breathing by sleep stage. It also adds each food and drink you log. Revised HRV, SpO2 and skin temperature days are also kept tidier.
+This release reads more of what Google holds: heart-rate zones, sedentary periods, altitude, swim lengths, breathing by sleep stage, and each food and drink you log. What you change or delete in the app now changes in the cache too, and a new rebuild shows anything else that differs from Google. This release asks for no new permission.
 
-### New data to ask for
+### When you ask about your activity
 
-- `health_get_heart_rate_zones` returns Google's four heart-rate zones for each day. Each zone has its lowest and highest heart rate.
-- `health_get_activity_events` returns each sedentary period, altitude gain and swim length. You get its start, end and values, or the whole record with `include_records`. It covers the last 7 days unless you ask for more.
-- Swim lengths are the ones your watch notices on its own. They can appear on days without a swim workout.
-- `health_get_breathing_rate` takes `include_sleep_summaries`. It adds your breathing rate for the whole night and for deep, light and REM sleep.
-- `health_get_food_log` takes `include_entries`. It adds each food and drink you logged, with its time. A food comes with its name, meal, serving, calories and nutrients, and a drink with its amount. It covers the last 7 days unless you ask for more.
-- Each event, entry and breathing summary comes with its UTC offset, which gives its local time.
-- `health_get_food_log` offers a live fetch when it finds nothing in the cache, as the other tools do.
+- More of your day:
+  - `health_get_activity_events` returns each sedentary period, altitude gain and swim length. Each comes with its start, end, UTC offset and values, or the whole record with `include_records`. It covers the last 7 days unless you ask for more.
+  - Swim lengths are the ones your watch notices on its own. They can appear on days without a swim workout.
+  - `health_get_heart_rate_zones` returns Google's four heart-rate zones for each day. Each zone has its lowest and highest heart rate.
 
-### Steadier daily figures
+### When you ask about food and drink
 
-- Some figures arrive only with Google's own readings: HRV entropy and non-REM heart rate, the SpO2 bounds and spread, and every skin temperature figure. When Google revises such a day, these follow the revision. A figure the revised day lacks is cleared, not left behind. Imported history is untouched.
-- VO2 max is read under the activity and fitness permission, where Google's data-type reference lists it.
+- Each entry, not only the day's total:
+  - `health_get_food_log` takes `include_entries`. It adds each food and drink you logged, with its time and UTC offset. A food comes with its name, meal, serving, calories and nutrients, and a drink with its amount. It covers the last 7 days unless you ask for more.
+  - A day's totals and its entries are refreshed together.
+- A clearer empty answer:
+  - When the cache holds nothing for the period, the tool offers a live fetch, as the other tools do.
 
-### When you correct a reading
+### When you ask about sleep
 
-- A body temperature you edit in the app now replaces its old value at the next sync, so trends count it once.
+- Breathing by sleep stage:
+  - `health_get_breathing_rate` takes `include_sleep_summaries`. It adds your breathing rate for the whole night and for deep, light and REM sleep, each with its time and UTC offset.
+- Steadier nightly figures:
+  - Some figures arrive only with Google's own readings: HRV entropy and non-REM heart rate, the SpO2 bounds and spread, and every skin temperature figure. When Google revises a day, these follow the revision. A figure the revised day lacks is cleared, not left behind. Imported history is untouched.
+
+### When you change or delete something in the app
+
+- What you log by hand now matches the app:
+  - A food, drink, body temperature, weigh-in, body-fat reading or workout you delete in the app leaves the cache at the next sync of its date. A deleted workout takes its route with it.
+  - An entry or reading you edit in the app replaces its old value, so trends count it once.
+  - A day whose entries you all deleted has its daily totals cleared too.
+  - Imported history is never touched.
+- A way to check everything else:
+  - `health_rebuild`, or `google-health-mcp rebuild`, fetches a date range again from Google, for any type. It lists every row that would go and every value that would change.
+  - It changes nothing unless you pass `apply`, so you can read the list first.
+  - An imported value beside Google's stays, as long as Google still holds that row. A row Google no longer holds goes, with anything imported on it, and the list shows it.
+  - If Google sends back nothing a type can store, that type keeps its rows and the list says why.
 
 ### After upgrading
 
 - On a multi-host setup, upgrade the syncing host first and let it sync once. This release adds tables, and the first host to open the cache creates them. A cache-only host doing that would write to the shared file.
 - A first sync of the new data covers the last 30 days. For older history, run `google-health-mcp sync --types heart_rate_zones,sedentary_periods,altitude_gains,swim_lengths,respiratory_rate_sleep,food_entries,water_entries --since <date>`.
 - `sync --types` and `health_sync` accept those seven new names.
+- Something you deleted or edited before this release is put right when its date is next synced. For older dates, run `google-health-mcp rebuild --since <date>` to see what would change, then again with `--apply`.
+- One exception: a daily weight or body-fat figure synced before this release stays in `health_get_weight` after you delete every reading behind it, and a rebuild does not clear it either. The readings themselves leave `health_get_weight_readings`.
+
+### For developers
+
+- VO2 max is read under the activity and fitness permission, where Google's data-type reference lists it.
 
 ## 1.12.0 - 2026-11-06
 
