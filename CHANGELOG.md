@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased - 1.13.0
+## 1.13.0 - 2026-11-22
 
 This release reads more of what Google holds: heart-rate zones, sedentary periods, altitude, swim lengths, breathing by sleep stage, and each food and drink you log. What you change or delete in the app now changes in the cache too, and a new rebuild shows anything else that differs from Google. This release asks for no new permission.
 
