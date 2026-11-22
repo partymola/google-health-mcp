@@ -1,6 +1,7 @@
 """Sync tool: fetch data from the Google Health API and store it in the cache."""
 
 import logging
+import sqlite3
 from datetime import date, timedelta
 
 import anyio
@@ -9,6 +10,7 @@ from .. import api, auth, config, db
 from ..errors import LiveRefreshFailed
 from ..helpers import format_response, require_auth
 from ..mcp_instance import mcp
+from . import google_sync
 from .google_sync import GOOGLE_SYNC_HANDLERS, HANDLER_SCOPES
 
 logger = logging.getLogger(__name__)
@@ -93,7 +95,9 @@ def run_sync(
         conn.close()
 
 
-def _run_sync_types(conn, data_types, results, since_date, until_date, today, days, handlers):
+def _run_sync_types(
+    conn, data_types, results, since_date, until_date, today, days, handlers, compact=True
+):
     # A token from before scopes were recorded says nothing until its next
     # refresh, so one is asked for now; otherwise the first sync after an
     # upgrade fetches what the grant lacks and fails on the 403. If it cannot
@@ -216,14 +220,18 @@ def _run_sync_types(conn, data_types, results, since_date, until_date, today, da
 
     # Here rather than on open: every host opens the cache, and only the one
     # that syncs may rewrite it.
-    if not config.OFFLINE_MODE:
-        try:
-            packed = db.compact(conn)
-            if packed:
-                logger.info("Compressed %d stored value(s)", packed)
-        except Exception as e:
-            logger.warning("Could not compact the cache: %s", type(e).__name__)
+    if compact and not config.OFFLINE_MODE:
+        _compact(conn)
     return results
+
+
+def _compact(conn) -> None:
+    try:
+        packed = db.compact(conn)
+        if packed:
+            logger.info("Compressed %d stored value(s)", packed)
+    except Exception as e:
+        logger.warning("Could not compact the cache: %s", type(e).__name__)
 
 
 def auto_sync_if_stale(*data_types: str) -> None:
@@ -294,6 +302,239 @@ def refresh_before_query(
             # The status word only. These paths carry API responses, and the
             # accompanying notes are not this function's to widen.
             raise LiveRefreshFailed(f"live refresh of {name} failed: {status or 'no result'}")
+
+
+#: Bookkeeping columns, which a report leaves out: they hold no reading.
+_BOOKKEEPING = frozenset({"provider", "google_columns"})
+
+#: The tables whose sync already removes what Google no longer holds, under
+#: its own guards: a point Google still lists is kept even when it cannot be
+#: stored. A rebuild leaves removal there to the sync. A route leaves with its
+#: workout, and one already held is not fetched again, so a rebuild never
+#: removes one on its own.
+_SWEPT_TABLES = frozenset(
+    {
+        "food_entries",
+        "water_entries",
+        "food_log",
+        "core_temperature",
+        "weight_readings",
+        "body_fat_readings",
+        "weight",
+        "exercises",
+        "exercise_routes",
+    }
+)
+
+
+def _shown(row: dict, packed: str | None) -> dict:
+    """A row as a report carries it: compressed text named rather than sent."""
+    return {
+        column: "(stored compressed)" if column == packed and value is not None else value
+        for column, value in row.items()
+        if column not in _BOOKKEEPING
+    }
+
+
+def _differences(table: str, before: list[dict], after: list[dict]) -> dict:
+    """What a fetch changed among one provider's rows: gone, changed, new, the same."""
+    keys, packed = db.key_columns(table), db.packed_column(table)
+    after_by_key = {tuple(row[k] for k in keys): row for row in after}
+    removed, changed, kept = [], [], set()
+    for row in before:
+        key = tuple(row[k] for k in keys)
+        now = after_by_key.get(key)
+        if now is None:
+            removed.append(_shown(row, packed))
+            continue
+        kept.add(key)
+        columns = {
+            column: {"before": _shown(row, packed)[column], "after": _shown(now, packed)[column]}
+            for column in row
+            if column not in _BOOKKEEPING and row[column] != now.get(column)
+        }
+        if columns:
+            changed.append({**{k: row[k] for k in keys}, "date": row["date"], "columns": columns})
+    return {
+        "removed": removed,
+        "changed": changed,
+        "added": len(set(after_by_key) - kept),
+        "unchanged": len(kept) - len(changed),
+    }
+
+
+def rebuild(
+    data_types: list[str],
+    since: str,
+    until: str | None = None,
+    apply: bool = False,
+    handlers: dict | None = None,
+) -> dict:
+    """Fetch [since, until] again from Google for each type, and say what changed.
+
+    The dates are synced again over the rows already held, with a day either
+    side, so a value an import put beside Google's stays wherever Google
+    still holds the row. Then a row this provider wrote for [since, until],
+    held before the fetch, that the fetch did not write again is one Google
+    no longer holds, and is removed, with any imported value on it. The day
+    either side is there because several types are filtered by Google on one
+    clock and dated here on another, so a row on the first or last day can
+    fall outside an answer for exactly those dates. On the tables whose sync
+    removes what Google dropped, that sync's own removal is left to stand,
+    the day either side included. A type whose fetch wrote nothing for
+    [since, until] has nothing removed: an answer holding nothing this
+    package could store is no evidence that every row went. Rows an import
+    wrote and Google never did are not touched. The result lists each row
+    that went and each that changed, with its values before and after.
+    Without `apply` the work runs on an in-memory copy and the cache is left
+    as it was, so the result is a preview. A type whose fetch fails has
+    nothing removed. A rebuild stopped part-way leaves its dates as far as
+    it got, and running it again completes them.
+    """
+    today = date.today()
+
+    def _all_error(message: str) -> dict:
+        types = {dtype: {"status": "error", "message": message} for dtype in data_types}
+        return {"applied": False, "types": types}
+
+    try:
+        since_date = date.fromisoformat(since)
+        until_date = min(date.fromisoformat(until), today) if until else today
+    except (TypeError, ValueError):
+        return _all_error("Dates must be YYYY-MM-DD, and since is required.")
+    if until_date < since_date:
+        return _all_error(f"'until' ({until_date}) is before 'since' ({since_date}).")
+
+    handlers = GOOGLE_SYNC_HANDLERS if handlers is None else handlers
+    conn = db.get_db()
+    target = conn
+    try:
+        if not apply:
+            target = sqlite3.connect(":memory:")
+            conn.backup(target)
+            target.row_factory = sqlite3.Row
+        first, last = since_date.isoformat(), until_date.isoformat()
+        fetch_start = max(since_date, date.min + timedelta(days=1)) - timedelta(days=1)
+        fetch_end = min(until_date + timedelta(days=1), today)
+        # The report covers what the fetch could touch, edge days included.
+        seen_first, seen_last = fetch_start.isoformat(), fetch_end.isoformat()
+        provider = google_sync.PROVIDER
+        results, before, notes = {}, {}, {}
+        for dtype in data_types:
+            table = db.table_for(dtype)
+            if table is None or dtype not in handlers:
+                results[dtype] = {"status": "error", "message": f"Cannot rebuild {dtype}."}
+                continue
+            before[dtype] = db.rows_written_by(target, table, provider, seen_first, seen_last)
+            db.watch_writes(target, table)
+        outcome: dict = {}
+        _run_sync_types(
+            target,
+            list(before),
+            outcome,
+            fetch_start,
+            fetch_end,
+            today,
+            30,
+            handlers,
+            compact=False,
+        )
+        succeeded = [d for d in before if outcome.get(d, {}).get("status") == "ok"]
+        for dtype in succeeded:
+            table = db.table_for(dtype)
+            if table in _SWEPT_TABLES:
+                continue
+            # Only rows held before the fetch: another process may have written since.
+            keys = db.key_columns(table)
+            held = {tuple(row[k] for k in keys) for row in before[dtype]}
+            not_written = db.rows_not_written(target, table, provider, first, last)
+            unwritten = [row for row in not_written if tuple(row[k] for k in keys) in held]
+            stored = db.rows_written_by(target, table, provider, first, last)
+            if len(stored) == len(not_written):
+                # The fetch wrote nothing for these dates.
+                if unwritten:
+                    notes[dtype] = (
+                        "Google sent nothing this type could store for these dates, "
+                        "so nothing was removed."
+                    )
+                continue
+            db.remove_rows(target, table, unwritten)
+        target.commit()
+        # Reported once every removal is made, so no type's report predates another's.
+        for dtype in before:
+            table = db.table_for(dtype)
+            if dtype not in succeeded:
+                results[dtype] = outcome.get(dtype, {"status": "error", "message": "No result."})
+                continue
+            after = db.rows_written_by(target, table, provider, seen_first, seen_last)
+            results[dtype] = {
+                "status": "ok",
+                "range": f"{seen_first} to {seen_last}",
+                **_differences(table, before[dtype], after),
+                **({"note": notes[dtype]} if dtype in notes else {}),
+            }
+        # After the removals, so nothing rewrites a row between noting the
+        # fetch's writes and reading them, and after the report, which then
+        # shows no value as changed by being packed.
+        if apply:
+            _compact(target)
+        return {"applied": apply, "types": {dtype: results[dtype] for dtype in data_types}}
+    finally:
+        if target is not conn:
+            target.close()
+        conn.close()
+
+
+@mcp.tool(structured_output=False)
+@require_auth
+async def health_rebuild(
+    since: str,
+    until: str | None = None,
+    data_types: str = "all",
+    apply: bool = False,
+) -> str:
+    """Fetch a date range again from Google and report every row that would change.
+
+    For when the cache may hold something Google no longer does, or holds it
+    differently. These dates are fetched again, with a day either side, and
+    a row Google sent before and no longer holds is removed. A removed row
+    loses any imported value it carried, and the reply lists it with every
+    value. Where Google still holds a row, an imported value beside Google's
+    stays. History only an import wrote is never touched. A type whose fetch
+    brings back nothing it can store keeps its rows, and says so in a note.
+    A daily weight or body-fat figure synced before release 1.13.0 stays
+    even after its readings are deleted. Without apply nothing is changed:
+    the reply is a preview. Show the person what it lists before running it
+    again with apply=True. A preview copies the cache into memory and makes
+    the same requests to Google as applying does.
+
+    Args:
+        since: First date to rebuild, "YYYY-MM-DD". Required.
+        until: Last date, "YYYY-MM-DD". Default: today.
+        data_types: "all", or comma-separated names as health_sync takes
+            them. "account" has no dates and is never rebuilt.
+        apply: If true, change the cache. Default: false, a preview.
+
+    Returns, per type, removed (each row Google no longer holds, with its
+    values), changed (each row whose values differ, before and after),
+    added and unchanged (counts), and the range the fetch covered. A type
+    whose fetch fails has nothing removed.
+    """
+    if config.OFFLINE_MODE:
+        return format_response(
+            {
+                "error": (
+                    "Offline mode is on (GOOGLE_HEALTH_MCP_OFFLINE); a rebuild fetches from "
+                    "Google. Run it on the host that owns the cache."
+                ),
+                "offline_mode": True,
+            }
+        )
+    types = [t.strip() for t in data_types.split(",")]
+    if "all" in types:
+        types = [t for t in GOOGLE_SYNC_HANDLERS if db.table_for(t) is not None]
+    result = await anyio.to_thread.run_sync(lambda: rebuild(types, since, until, apply=apply))
+    return format_response(result)
 
 
 @mcp.tool(structured_output=False)

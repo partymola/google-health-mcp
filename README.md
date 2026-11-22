@@ -184,6 +184,11 @@ google-health-mcp sync           Sync data to the local cache
   --until YYYY-MM-DD    Inclusive end date for a --since window; together they
                         re-fetch exactly that window, to repair a gap in the
                         middle of the cache
+google-health-mcp rebuild        Fetch a date range again and report what changes
+  --since YYYY-MM-DD    First date to rebuild (required)
+  --until YYYY-MM-DD    Last date (default: today)
+  --types TYPE,...      Data types, as for sync (default: every type with dates)
+  --apply               Change the cache; without it the report is a preview
 google-health-mcp import         Import exported JSON data files
   --data-dir PATH       Directory containing the JSON files
 ```
@@ -223,6 +228,25 @@ A start after the end, or a date of the right shape that does not exist, such as
 **What you delete or change in the app is deleted or changed in the cache.** That covers food, drink, body temperature, weigh-ins, body fat and workouts, whether you logged a workout or the watch recorded it. An entry deleted in the app simply stops appearing in the API, with nothing to say it was deleted. So once a sync has Google's whole answer for its dates, it removes what Google no longer holds for those dates. It never touches imported history or dates outside the sync. If Google's answer holds something the sync cannot place, it removes nothing that run. An ordinary sync covers only the last few days, so for a deletion further back, or an entry moved to an earlier date, run `health_rebuild` or `sync --since` over those dates.
 
 A device series is not deleted after the fact, so a sync never removes from it. Sedentary periods, altitude gains, swim lengths and the sleep-stage breathing summaries are kept a day at a time. A re-sync replaces each such day with what Google sends for it now. A day Google sends nothing for keeps what it had.
+
+### health_rebuild
+
+Fetches a date range again from Google, for any type, and reports every row that changes. It asks for a day either side too, since Google files some types by a different clock from the one they are dated by here. On those two days a rebuild changes only what a sync of them would: for the types you log by hand, that includes removing what you deleted. The report's `range` is the dates it fetched, extra days included.
+
+- `since` - first date, `YYYY-MM-DD`. Required.
+- `until` - last date. Default: today.
+- `data_types` - as for `health_sync`. Default: every type with dates.
+- `apply` - if true, change the cache. Default: false, a preview that changes nothing.
+
+The report lists each row that would go and each that would change, with its values before and after. Read the preview, then run it again with `apply`. The same is `google-health-mcp rebuild`, which previews unless given `--apply`.
+
+A row Google sent before and no longer holds goes. If an import also put a value on that row, the value goes with it, and the report lists it. Where Google still holds the row, an imported value beside Google's stays. History only an import wrote is never touched. A preview copies the cache into memory and makes the same requests to Google as applying does.
+
+Some things a rebuild leaves as they are:
+
+- A type whose answer holds nothing it can store for those dates keeps its rows. Where it had rows there, the report says so in a `note`, since an answer like that is more likely a fault than every reading gone.
+- A route already held is not fetched again. It goes only with its workout.
+- A daily weight or body-fat figure synced before 1.13.0 stays after you delete every reading behind it. The readings themselves go.
 
 ### health_trends
 

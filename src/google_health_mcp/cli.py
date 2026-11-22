@@ -6,6 +6,7 @@ Usage:
     google-health-mcp auth           Interactive OAuth setup
     google-health-mcp doctor         Check the setup and report what needs fixing
     google-health-mcp sync           Run data sync (for cron/systemd use)
+    google-health-mcp rebuild        Fetch a date range again and report what changes
     google-health-mcp import         Import existing JSON data files into SQLite
 """
 
@@ -110,6 +111,24 @@ def main():
         ),
     )
 
+    rebuild_parser = subparsers.add_parser(
+        "rebuild",
+        help="Fetch a date range again from Google and report what changes",
+    )
+    _add_version_argument(rebuild_parser)
+    rebuild_parser.add_argument("--since", required=True, help="First date (YYYY-MM-DD)")
+    rebuild_parser.add_argument("--until", default=None, help="Last date (default: today)")
+    rebuild_parser.add_argument(
+        "--types",
+        default="all",
+        help="Comma-separated data types, as for sync (default: all with dates)",
+    )
+    rebuild_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Change the cache. Without it the report is a preview and nothing changes.",
+    )
+
     import_parser = subparsers.add_parser(
         "import", help="Import exported JSON data files into SQLite"
     )
@@ -177,6 +196,34 @@ def main():
         failed = [d for d, r in results.items() if r.get("status") in ("auth_error", "error")]
         if failed:
             print(f"Sync failed for: {', '.join(failed)}", file=sys.stderr)
+            sys.exit(1)
+
+    elif args.cmd == "rebuild":
+        if config.OFFLINE_MODE:
+            print(
+                "Offline mode is on (GOOGLE_HEALTH_MCP_OFFLINE); refusing to rebuild. "
+                "Run it on the host that owns the cache.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        import json
+
+        from . import db
+
+        types = [t.strip() for t in args.types.split(",")]
+        if "all" in types:
+            types = [t for t in sync_tools.GOOGLE_SYNC_HANDLERS if db.table_for(t) is not None]
+        report = sync_tools.rebuild(types, args.since, args.until, apply=args.apply)
+        print(json.dumps(report, indent=2))
+        if not args.apply:
+            print(
+                "Preview only: nothing was changed. Add --apply to change the cache.",
+                file=sys.stderr,
+            )
+        failed = [t for t, r in report["types"].items() if r.get("status") != "ok"]
+        if failed:
+            print(f"Rebuild failed for: {', '.join(failed)}", file=sys.stderr)
             sys.exit(1)
 
     elif args.cmd == "import":

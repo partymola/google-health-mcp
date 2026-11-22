@@ -614,6 +614,55 @@ def remove_rows(conn: sqlite3.Connection, table: str, rows: list[dict]) -> int:
     return removed
 
 
+def watch_writes(conn: sqlite3.Connection, table: str) -> None:
+    """From now on, note every row of `table` this connection writes.
+
+    Temporary triggers, which exist on this connection alone and go when it
+    closes. They tell a row a fetch wrote again from one it left alone, even
+    when the values came back the same.
+    """
+    if table not in _UPSERT_KEYS:
+        raise ValueError(f"{table} is not a cached table")
+    conn.execute(f"CREATE TEMP TABLE IF NOT EXISTS written_{table} (id INTEGER PRIMARY KEY)")
+    for event in ("insert", "update"):
+        conn.execute(
+            f"CREATE TEMP TRIGGER IF NOT EXISTS written_{table}_{event} "
+            f"AFTER {event.upper()} ON main.{table} "
+            f"BEGIN INSERT OR IGNORE INTO written_{table} VALUES (NEW.rowid); END"
+        )
+
+
+def rows_not_written(
+    conn: sqlite3.Connection, table: str, provider: str, first_date: str, last_date: str
+) -> list[dict]:
+    """The rows `provider` last wrote in the range that nothing wrote since `watch_writes`."""
+    if table not in _UPSERT_KEYS:
+        raise ValueError(f"{table} is not a cached table")
+    return [
+        dict(row)
+        for row in conn.execute(
+            f"SELECT * FROM main.{table} WHERE provider = ? AND date >= ? AND date <= ? "
+            f"AND rowid NOT IN (SELECT id FROM temp.written_{table})",
+            (provider, first_date, last_date),
+        )
+    ]
+
+
+def key_columns(table: str) -> tuple[str, ...]:
+    """The columns that identify a row of `table`."""
+    return _UPSERT_KEYS[table]
+
+
+def packed_column(table: str) -> str | None:
+    """The column `table` stores compressed, if any."""
+    return _PACKED_COLUMNS.get(table)
+
+
+def table_for(data_type: str) -> str | None:
+    """The table a cached data type is stored in, or None if it has no dated table."""
+    return _DATA_TABLE_MAP.get(data_type)
+
+
 def save_cardio_fitness(conn: sqlite3.Connection, row: dict):
     _upsert(conn, "cardio_fitness", row)
 
