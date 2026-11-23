@@ -14,7 +14,7 @@ from .config import DB_PATH
 
 # Changing this? Every column added to a table an older release already had
 # needs an ALTER in MIGRATIONS below, or doctor tells that release's users to
-# re-create the database - see AGENTS.md, "Seams the suite does not cross".
+# re-create the database - see docs/agents/seams.md.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS heart_rate (
     date TEXT PRIMARY KEY,

@@ -7,4 +7,4 @@ through `db.get_db`, and asserts it ends up with exactly the current `SCHEMA`.
 Add one at each release whose schema differs from the newest file here. Never
 edit one in place. Deleting one drops support for databases that old.
 
-Why each of those matters: AGENTS.md, "Seams the suite does not cross".
+Why each of those matters: [docs/agents/seams.md](../../docs/agents/seams.md).

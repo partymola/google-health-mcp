@@ -44,8 +44,9 @@ class _CallbackServer(HTTPServer):
     reuse, which on Windows is what lets another process bind over this
     listener and take the code. Not asking is what closes that; the
     exclusive-use option is asked for as well. Why each half is there, and
-    what it costs, is in AGENTS.md. Pinned by TestTheCallbackPortIsNotShared,
-    which drives this method's Windows branch on a POSIX runner.
+    what it costs, is in docs/agents/auth.md. Pinned by
+    TestTheCallbackPortIsNotShared, which drives this method's Windows branch
+    on a POSIX runner.
     """
 
     allow_reuse_address = sys.platform != "win32"

@@ -53,7 +53,7 @@ Tests are fully offline - no real API calls, no real tokens. Autouse fixtures in
 - **Open an issue first** for non-trivial changes (new tools, schema migrations, new data types, breaking changes). Small fixes (typos, bug fixes, docs) can go straight to a PR.
 - Keep PRs small and focused.
 - Add or update tests for any behaviour change.
-- **Changing the database schema takes two edits, not one**: the column in `SCHEMA`, and an `ALTER` in `db.MIGRATIONS` so databases created by an earlier release get it too. The tests apply your migration to every schema in `tests/schema_baselines/` and fail if a column does not arrive; AGENTS.md explains what that prevents. A whole new table needs no migration - `CREATE TABLE IF NOT EXISTS` handles it.
+- **Changing the database schema takes two edits, not one**: the column in `SCHEMA`, and an `ALTER` in `db.MIGRATIONS` so databases created by an earlier release get it too. The tests apply your migration to every schema in `tests/schema_baselines/` and fail if a column does not arrive; [docs/agents/seams.md](docs/agents/seams.md) explains what that prevents. A whole new table needs no migration - `CREATE TABLE IF NOT EXISTS` handles it.
 - Run `pytest tests/ -v` before opening a PR.
 
 ## Releases (maintainers)

@@ -3,7 +3,7 @@
 A behavioural test asks "given this input, what happens". The assertions
 here are about the code's structure and its packaging, so nothing you can
 feed the server exercises them - which is why each of these survived until
-someone went looking. See AGENTS.md, "Seams the suite does not cross".
+someone went looking. See docs/agents/seams.md.
 """
 
 import ast
@@ -17,7 +17,7 @@ import sys
 import tomllib
 import urllib.request
 from importlib.metadata import version
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -76,29 +76,99 @@ def test_no_logger_call_in_shared_code_carries_a_path():
     assert not offenders, f"log line carries a path: {offenders}"
 
 
+_REPO = Path(google_health_mcp.__file__).parents[2]
+
+#: The target of an inline link to a markdown file: with or without `./`,
+#: angle brackets, an anchor or a title.
+_MD_LINK = re.compile(r"\]\(<?([^)>\s#]+\.md)(?=[#)>\s])")
+
+
+def _guide_files() -> list[Path]:
+    """AGENTS.md first, then every markdown file under docs/agents/."""
+    # is_file, or an editor's lock file (a dangling `.#name.md` symlink) counts.
+    pages = sorted(p for p in (_REPO / "docs" / "agents").rglob("*.md") if p.is_file())
+    return [_REPO / "AGENTS.md", *pages]
+
+
 def test_every_test_agents_md_names_exists():
-    """AGENTS.md pins its invariants by naming the test that holds each one.
+    """The agent guide pins its invariants by naming the test that holds each one.
 
     A renamed or deleted test leaves that sentence pointing at nothing, and
     the sentence is what a maintainer reads before deciding an invariant is
     safe to change - so the citation going stale is worse than its absence.
-    Nothing behavioural can see it: the doc is not imported by anything.
+    Nothing behavioural can see it: the guide is not imported by anything.
     """
-    doc = (Path(google_health_mcp.__file__).parents[2] / "AGENTS.md").read_text()
-    cited = set(re.findall(r"`(test_[A-Za-z0-9_]+|Test[A-Za-z0-9_]+)`", doc))
-    # A module is cited as a path elsewhere in the sentence; only names of
-    # tests are checked here.
-    cited = {name for name in cited if not name.endswith(".py")}
+    guide = "".join(p.read_text(encoding="utf-8") for p in _guide_files())
+    cited = set(re.findall(r"`(test_[A-Za-z0-9_]+|Test[A-Za-z0-9_]+)`", guide))
 
     defined = set()
     for source in sorted((Path(__file__).parent).rglob("test_*.py")):
-        for node in ast.walk(ast.parse(source.read_text())):
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 defined.add(node.name)
 
-    assert cited, "no test names found in AGENTS.md - the pattern has stopped matching"
+    assert cited, "no test names found in the agent guide - the pattern has stopped matching"
     missing = sorted(cited - defined)
-    assert not missing, f"AGENTS.md names tests that do not exist: {missing}"
+    assert not missing, f"the agent guide names tests that do not exist: {missing}"
+
+
+def test_every_guide_file_is_linked_and_every_link_resolves():
+    """An agent reaches a file under docs/agents/ only by a link from AGENTS.md.
+
+    A file nothing links to is one no agent is sent to read. The guide's
+    files also point at each other, so a link anywhere in it that names a
+    missing file sends the reader nowhere.
+    """
+    guide = _guide_files()
+    assert len(guide) > 1, "no guide files under docs/agents/ - the guide has moved"
+
+    broken, routed = [], set()
+    for page in guide:
+        for target in _MD_LINK.findall(page.read_text(encoding="utf-8")):
+            if "://" in target:
+                continue
+            resolved = (page.parent / target).resolve()
+            if not resolved.is_file():
+                broken.append(f"{page.relative_to(_REPO).as_posix()} -> {target}")
+            elif page == guide[0]:
+                routed.add(resolved)
+    assert not broken, f"links to files that do not exist: {broken}"
+
+    unlinked = [p.relative_to(_REPO).as_posix() for p in guide[1:] if p.resolve() not in routed]
+    assert not unlinked, f"guide files AGENTS.md does not link to: {unlinked}"
+
+
+def test_every_module_has_a_row_in_the_agent_guide():
+    """The table in AGENTS.md is how an agent finds the invariants of the module it edits.
+
+    A module no row names is sent to none of them, and nothing else notices.
+    Rows name one module per backtick span, by its path under the package or
+    by a glob whose `*` stays inside one directory. A row naming a module that
+    does not exist is a typo or a leftover, and a glob row would otherwise
+    hide it.
+    """
+    agents = (_REPO / "AGENTS.md").read_text(encoding="utf-8")
+    table = agents.split("\n## Before changing anything\n", 1)[-1].split("\n## ", 1)[0]
+    rows = [line.split("|")[1:3] for line in table.splitlines() if line.startswith("| ")]
+    assert rows, "the routing table in AGENTS.md has stopped matching - check the heading"
+    empty = [first for first, read in rows[1:] if "](docs/agents/" not in read]
+    assert not empty, f"rows in the AGENTS.md table that send to no guide file: {empty}"
+    patterns = {name for first, _ in rows for name in re.findall(r"`([^`]+)`", first)}
+
+    package = Path(google_health_mcp.__file__).parent
+    modules = [
+        p.relative_to(package).as_posix()
+        for p in package.rglob("*.py")
+        # is_file, or an editor's lock file counts; an empty __init__ holds nothing to route.
+        if p.is_file() and (p.name != "__init__.py" or p.read_text(encoding="utf-8").strip())
+    ]
+    unrouted = sorted(
+        m for m in modules if not any(PurePosixPath(m).full_match(p) for p in patterns)
+    )
+    assert not unrouted, f"modules no row of the AGENTS.md table names: {unrouted}"
+    named = {p for p in patterns if p.endswith(".py") and not set(p) & set("*?[")}
+    stale = sorted(named - set(modules))
+    assert not stale, f"rows in the AGENTS.md table name modules that do not exist: {stale}"
 
 
 def test_the_readme_scope_table_is_the_scopes_that_are_requested():
