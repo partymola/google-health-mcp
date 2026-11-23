@@ -4,7 +4,7 @@
 # that closed their `3.13-slim -> 3.14-slim` pull request. This repo never had
 # one and its updates still arrive, so the pin here is for consistency and to
 # keep it out of that trap rather than to escape it.
-FROM python:3.15.0-slim@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58
+FROM python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 WORKDIR /app
 
