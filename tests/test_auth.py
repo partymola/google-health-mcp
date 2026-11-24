@@ -330,9 +330,9 @@ class TestTheCallbackPage:
     def test_the_exception_reaches_the_user_only_as_its_type(self, flow):
         """A whitelist, not a list of banned shapes.
 
-        The page and stderr both carry what setup_auth formats, and the
-        exception's own text is a filesystem path for a TLS failure and
-        response bytes for a decode failure. Any expression form can carry
+        The page and stderr both carry what setup_auth formats. A decode
+        failure holds the response in its arguments, and any other failure's
+        text is not this package's to vet. Any expression form can carry
         it - a call argument, a concatenation, e.args[0], a walrus - so
         listing the ones seen so far only ever closes the last instance.
         The bound name is permitted inside type(e).__name__ and nowhere else.

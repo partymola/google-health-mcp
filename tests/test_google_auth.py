@@ -153,11 +153,11 @@ class TestTheGoogleRefreshBoundary:
         text would leak.
 
         `run_sync` writes this message into `sync_log` and returns it to the
-        client, and an unanticipated exception's own text is an absolute path
-        often enough. Asserted here rather than at the client, where
-        `google_get` substitutes a fixed message either way and would mask it.
+        client, and an unanticipated exception's own text can name an absolute
+        path. Asserted here rather than at the client, where `google_get`
+        substitutes a fixed message either way and would mask it.
         """
-        path = "/home/someone/certs/ca.pem"
+        path = "/home/someone/tokens.json"
         monkeypatch.setattr(
             auth, "_refresh_google_token", MagicMock(side_effect=RuntimeError(path))
         )

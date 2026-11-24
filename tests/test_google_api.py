@@ -628,7 +628,7 @@ class TestTheTokenLayerIsClassified:
         assert str(caught.value) == "Network error. Check your connection."
 
     def test_neither_message_carries_the_original(self, monkeypatch):
-        """A refresh failure's own text is a filesystem path often enough."""
+        """A refresh failure's own text can carry a path: `_load_google_client`'s does."""
         from google_health_mcp import auth
 
         for exc in (
@@ -640,9 +640,9 @@ class TestTheTokenLayerIsClassified:
             assert "/etc/secret" not in str(caught.value)
 
     def test_a_transport_failure_carries_no_path(self):
-        """A TLS or socket failure's own text is an absolute path."""
+        """The underlying exception's text is not this package's to vet: here, a path."""
         error = urllib.error.URLError(
-            OSError(2, "No such file or directory: '/home/someone/certs/ca.pem'")
+            FileNotFoundError(2, "No such file or directory", "/home/someone/tokens.json")
         )
         with patch("urllib.request.urlopen", side_effect=error):
             with pytest.raises(api.HealthAPIError) as caught:
